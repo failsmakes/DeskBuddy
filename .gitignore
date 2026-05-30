@@ -50,3 +50,34 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+
+# PlatformIO build klasörleri
+.pio/
+.pioenvs/
+.piolibdeps/
+.pio/libdeps/
+
+# VSCode ayarları
+.vscode/
+
+# CLion ayarları
+.idea/
+
+# Derleme çıktıları
+*.elf
+*.bin
+*.hex
+*.map
+
+# Log ve geçici dosyalar
+*.log
+*.tmp
+
+# Python sanal ortamları (eğer kullanıyorsan)
+venv/
+.env/
+
+# MacOS ve Windows sistem dosyaları
+.DS_Store
+Thumbs.db
