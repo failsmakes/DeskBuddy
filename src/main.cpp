@@ -35,6 +35,7 @@
 #include "app_state.h"
 #include "display_renderer.h"
 #include "web_server.h"
+#include "battery.h"
 
 // ─── RoboEyesTFT ─────────────────────────────────────────────
 // https://github.com/yousseftechdev/RoboEyesTFT
@@ -57,6 +58,7 @@ AlarmManager     alarmMgr;
 AppState         appState;
 DisplayRenderer  display;
 ConfigWebServer  webServer;
+Battery          battery;
 
 RoboEyesTFT*     eyes = nullptr;
 
@@ -290,6 +292,9 @@ void setup() {
     // Buzzer
     buzzer.begin();
 
+    // Batarya
+    battery.begin();
+
     // WiFi
     bool wifiOK = wifiManager.begin();
 
@@ -352,6 +357,9 @@ void loop() {
         dht20.read();
         lastDHTread = now;
     }
+
+    // ── Batarya ─────────────────────────────────────────────
+    battery.update();
 
     // ── Alarm / countdown / stopwatch ───────────────────────
     struct tm localT = timeManager.getLocalTime();

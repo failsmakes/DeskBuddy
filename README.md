@@ -192,6 +192,7 @@ deskbuddy/
 │   ├── wifi_manager.h        ← STA/AP modu yönetimi
 │   ├── time_manager.h        ← NTP senkronizasyonu
 │   ├── dht20_sensor.h        ← DHT20 I2C sürücüsü
+│   ├── battery.h             ← Batarya voltaj/yüzde okuyucu (GPIO35)
 │   ├── touch_input.h         ← Kapasitif touch yönetimi
 │   ├── buzzer.h              ← Non-blocking buzzer
 │   ├── weather.h             ← OpenWeatherMap API

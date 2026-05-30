@@ -7,6 +7,7 @@
 #include "alarm_manager.h"
 #include "dht20_sensor.h"
 #include "time_manager.h"
+#include "battery.h"
 
 // ============================================================
 //  display_renderer.h  –  All screen drawing routines
@@ -72,39 +73,152 @@ public:
         tft.print("DeskBuddy");
     }
 
-    // ─── Date/Time + DHT20 screen ─────────────────────────────
+    // =========================================================
+    //  Batarya ikonu + yuzde gosterimi
+    //
+    //  Ikon anatomisi (klasik pil sembolu):
+    //   +--[+]-+
+    //   |      |   <-- dis cerceve
+    //   | #### |   <-- doluluk cubugu
+    //   +------+
+    //
+    //  x,y: ikonun sol ust kosesi
+    //  w,h: dis cercevenin genisligi ve yuksekligi
+    // =========================================================
+    void drawBatteryIcon(int16_t x, int16_t y, int16_t w, int16_t h,
+                         uint8_t pct, bool critical) {
+        // Renk secimi
+        uint16_t barColor;
+        if (critical)    barColor = TFT_RED;
+        else if (pct > 50) barColor = TFT_GREEN;
+        else if (pct > 20) barColor = TFT_YELLOW;
+        else               barColor = TFT_RED;
+
+        // Dis cerceve
+        tft.drawRect(x, y, w, h, TFT_WHITE);
+
+        // Ucundaki kucuk kutup tokmagi (+)
+        int16_t tipW = 4;
+        int16_t tipH = h / 3;
+        int16_t tipX = x + w;
+        int16_t tipY = y + (h - tipH) / 2;
+        tft.fillRect(tipX, tipY, tipW, tipH, TFT_WHITE);
+
+        // Ic doluluk alani
+        int16_t innerX = x + 2;
+        int16_t innerY = y + 2;
+        int16_t innerW = w - 4;
+        int16_t innerH = h - 4;
+
+        // Once ici siyah yap
+        tft.fillRect(innerX, innerY, innerW, innerH, TFT_BLACK);
+
+        // Dolu kismi ciz
+        int16_t fillW = (int16_t)((innerW * pct) / 100);
+        if (fillW > 0) {
+            tft.fillRect(innerX, innerY, fillW, innerH, barColor);
+        }
+
+        // Kritik modda yanip sonme efekti (millis cift/tek)
+        if (critical && ((millis() / 500) % 2 == 0)) {
+            tft.fillRect(innerX, innerY, innerW, innerH, TFT_BLACK);
+        }
+    }
+
+    // Batarya yuzdesini metin olarak cizer (%XX)
+    void drawBatteryText(int16_t x, int16_t y, uint8_t pct, bool critical) {
+        uint16_t col;
+        if (critical)      col = TFT_RED;
+        else if (pct > 50) col = TFT_GREEN;
+        else if (pct > 20) col = TFT_YELLOW;
+        else               col = TFT_RED;
+
+        tft.setTextSize(1);
+        tft.setTextColor(col, TFT_BLACK);
+        char buf[7];
+        snprintf(buf, sizeof(buf), "%3d%%", pct);
+        tft.setCursor(x, y);
+        tft.print(buf);
+    }
+
+    // Tam batarya widget'i: ikon + yuzde metni yan yana
+    // x,y: sol ust, iconW/iconH: ikon boyutu
+    void drawBatteryWidget(int16_t x, int16_t y,
+                           int16_t iconW = 36, int16_t iconH = 16) {
+        if (!battery.valid) return;
+        drawBatteryIcon(x, y, iconW, iconH, battery.percent, battery.critical);
+        drawBatteryText(x + iconW + 6, y + (iconH / 2) - 4,
+                        battery.percent, battery.critical);
+    }
+
+    // ─── Date/Time + DHT20 + Batarya ekrani ──────────────────
     void drawDateTime(struct tm& t, bool showSec = false,
                       const char* secCity = nullptr,
                       const WeatherDay* secWeather = nullptr) {
         tft.fillScreen(TFT_BLACK);
+
         if (!showSec) {
-            // Primary: date, time, temp, humidity
-            char timeBuf[9], dateBuf[11];
+            // ── Ana ekran: Saat | Tarih | Sicaklik/Nem | Batarya ──
+
+            // Batarya widget'i -- sag ust kose
+            // Ikon: 36x16 px, pozisyon: sag ust koseden 4px bosluk
+            // Yuzde metni yaninda (1px textsize = 6px karakter genisligi)
+            drawBatteryWidget(SCREEN_W - 36 - 6 - 24 - 4, 4, 36, 16);
+
+            // Saat -- buyuk font, ortada
+            char timeBuf[9];
             snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d:%02d",
                      t.tm_hour, t.tm_min, t.tm_sec);
-            snprintf(dateBuf, sizeof(dateBuf), "%02d.%02d.%04d",
-                     t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
-
             tft.setTextColor(TFT_CYAN, TFT_BLACK);
             tft.setTextSize(4);
-            tft.setCursor(30, 40);
+            tft.setCursor(16, 30);
             tft.print(timeBuf);
 
+            // Tarih -- orta buyuklukte, saatin altinda
+            char dateBuf[11];
+            snprintf(dateBuf, sizeof(dateBuf), "%02d.%02d.%04d",
+                     t.tm_mday, t.tm_mon + 1, t.tm_year + 1900);
             tft.setTextSize(2);
             tft.setTextColor(TFT_WHITE, TFT_BLACK);
-            tft.setCursor(80, 100);
+            tft.setCursor(72, 94);
             tft.print(dateBuf);
 
+            // Yatay ayirici cizgi
+            tft.drawFastHLine(0, 118, SCREEN_W, TFT_DARKGREY);
+
+            // Sicaklik ve nem -- alt sol
             if (dht20.valid) {
                 tft.setTextSize(2);
                 tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-                tft.setCursor(20, 150);
+                tft.setCursor(10, 130);
                 tft.printf("Temp: %.1f C", dht20.temperature);
-                tft.setCursor(20, 175);
+                tft.setCursor(10, 158);
                 tft.printf("Hum:  %.0f%%", dht20.humidity);
             }
+
+            // Batarya voltaji -- alt sag
+            if (battery.valid) {
+                tft.setTextSize(1);
+                uint16_t col = battery.critical ? TFT_RED : TFT_DARKGREY;
+                tft.setTextColor(col, TFT_BLACK);
+                tft.setCursor(SCREEN_W - 60, 200);
+                tft.printf("%.2fV", battery.voltage);
+
+                // Kritik uyari
+                if (battery.critical) {
+                    tft.setTextSize(1);
+                    tft.setTextColor(TFT_RED, TFT_BLACK);
+                    tft.setCursor(SCREEN_W - 80, 215);
+                    tft.print("LOW BATTERY!");
+                }
+            }
+
         } else {
-            // Secondary: city, time, weather
+            // ── Ikincil konum ekrani: Sehir | Saat | Hava + Batarya ──
+
+            // Batarya widget'i -- sag ust kose (kucuk)
+            drawBatteryWidget(SCREEN_W - 36 - 6 - 24 - 4, 4, 30, 14);
+
             tft.setTextColor(TFT_CYAN, TFT_BLACK);
             tft.setTextSize(2);
             tft.setCursor(10, 10);
