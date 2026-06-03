@@ -14,32 +14,6 @@
 //  Uses TFT_eSPI (double-buffered where needed via sprites)
 // ============================================================
 
-// ---- Minimal DeskBuddy logo (16×16 monochrome C-array) ------
-// Replace this with your actual 1-bit logo XBM/C-array.
-// Format: 1 = foreground pixel, 0 = background pixel
-// Each byte = 8 pixels, LSB first
-static const uint8_t LOGO_BITMAP[] PROGMEM = {
-    0b00111100, 0b00000000,
-    0b01111110, 0b00000000,
-    0b11000011, 0b00000000,
-    0b11011011, 0b00000000,
-    0b11111111, 0b00000000,
-    0b11011011, 0b00000000,
-    0b11000011, 0b00000000,
-    0b01111110, 0b00000000,
-    0b00111100, 0b00000000,
-    0b00011000, 0b00000000,
-    0b00111100, 0b00000000,
-    0b01111110, 0b00000000,
-    0b01111110, 0b00000000,
-    0b00111100, 0b00000000,
-    0b00011000, 0b00000000,
-    0b00000000, 0b00000000
-};
-#define LOGO_W 16
-#define LOGO_H 16
-#define LOGO_SCALE 8   // render at 128×128
-
 class DisplayRenderer {
 public:
     TFT_eSPI   tft;
@@ -90,19 +64,19 @@ public:
         // Renk secimi
         uint16_t barColor;
         if (critical)    barColor = TFT_RED;
-        else if (pct > 50) barColor = TFT_GREEN;
-        else if (pct > 20) barColor = TFT_YELLOW;
+        else if (pct > 50) barColor = 0x877F; //TFT_GREEN;
+        else if (pct > 20) barColor = 0x877F; //TFT_YELLOW;
         else               barColor = TFT_RED;
 
         // Dis cerceve
-        tft.drawRect(x, y, w, h, TFT_WHITE);
+        tft.drawRect(x, y, w, h, 0x877F); //TFT_WHITE);
 
         // Ucundaki kucuk kutup tokmagi (+)
         int16_t tipW = 4;
         int16_t tipH = h / 3;
         int16_t tipX = x + w;
         int16_t tipY = y + (h - tipH) / 2;
-        tft.fillRect(tipX, tipY, tipW, tipH, TFT_WHITE);
+        tft.fillRect(tipX, tipY, tipW, tipH, 0x877F); //TFT_WHITE);
 
         // Ic doluluk alani
         int16_t innerX = x + 2;
@@ -129,8 +103,8 @@ public:
     void drawBatteryText(int16_t x, int16_t y, uint8_t pct, bool critical) {
         uint16_t col;
         if (critical)      col = TFT_RED;
-        else if (pct > 50) col = TFT_GREEN;
-        else if (pct > 20) col = TFT_YELLOW;
+        else if (pct > 50) col = 0x877F; //TFT_GREEN;
+        else if (pct > 20) col = 0x877F; //TFT_YELLOW;
         else               col = TFT_RED;
 
         tft.setTextSize(1);

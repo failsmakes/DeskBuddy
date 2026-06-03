@@ -29,6 +29,32 @@
 #define LOGO_FG_COLOR         0x07FF // cyan-ish (565)
 #define LOGO_BG_COLOR         0x0000 // black
 
+// ---- Minimal DeskBuddy logo (16×16 monochrome C-array) ------
+// Replace this with your actual 1-bit logo XBM/C-array.
+// Format: 1 = foreground pixel, 0 = background pixel
+// Each byte = 8 pixels, LSB first
+static const uint8_t LOGO_BITMAP[] PROGMEM = {
+    0b00111100, 0b00000000,
+    0b01111110, 0b00000000,
+    0b11000011, 0b00000000,
+    0b11011011, 0b00000000,
+    0b11111111, 0b00000000,
+    0b11011011, 0b00000000,
+    0b11000011, 0b00000000,
+    0b01111110, 0b00000000,
+    0b00111100, 0b00000000,
+    0b00011000, 0b00000000,
+    0b00111100, 0b00000000,
+    0b01111110, 0b00000000,
+    0b01111110, 0b00000000,
+    0b00111100, 0b00000000,
+    0b00011000, 0b00000000,
+    0b00000000, 0b00000000
+};
+#define LOGO_W 16
+#define LOGO_H 16
+#define LOGO_SCALE 8   // render at 128×128
+
 // ---------- WiFi / EEPROM ----------
 #define MAX_WIFI_NETWORKS      5
 #define WIFI_SSID_LEN         32
