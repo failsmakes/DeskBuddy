@@ -5,7 +5,7 @@
 #include "app_state.h"
 #include "weather.h"
 #include "alarm_manager.h"
-#include "dht20_sensor.h"
+#include "dht_sensor.h"
 #include "time_manager.h"
 #include "battery.h"
 
@@ -161,13 +161,13 @@ public:
             tft.drawFastHLine(0, 118, SCREEN_W, TFT_DARKGREY);
 
             // Sicaklik ve nem -- alt sol
-            if (dht20.valid) {
+            if (dhtSensor.valid) {
                 tft.setTextSize(2);
                 tft.setTextColor(TFT_YELLOW, TFT_BLACK);
                 tft.setCursor(10, 130);
-                tft.printf("Temp: %.1f C", dht20.temperature);
+                tft.printf("Temp: %.1f C", dhtSensor.temperature);
                 tft.setCursor(10, 158);
-                tft.printf("Hum:  %.0f%%", dht20.humidity);
+                tft.printf("Hum:  %.0f%%", dhtSensor.humidity);
             }
 
             // Batarya voltaji -- alt sag
@@ -290,28 +290,83 @@ public:
         }
     }
 
-    // ─── Alarm sub-screens ────────────────────────────────────
-    void drawAlarmScreen(uint8_t h, uint8_t m, bool enabled) {
+    // ─── Alarm ekrani - 3 alarm yuvasi ───────────────────────
+    // selectedIdx: su an duzenlenen yuva (0-2), vurgulu gosterilir
+    void drawAlarmScreen(const AlarmEntry alarms[], uint8_t selectedIdx) {
         tft.fillScreen(TFT_BLACK);
+
+        // Baslik
         tft.setTextColor(TFT_RED, TFT_BLACK);
         tft.setTextSize(2);
-        tft.setCursor(10, 10);
+        tft.setCursor(10, 6);
         tft.print("ALARM");
-        if (enabled) {
-            tft.setTextColor(TFT_GREEN, TFT_BLACK);
-            tft.print(" [ON]");
-        } else {
-            tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-            tft.print(" [OFF]");
+
+        // Her alarm yuvasi icin satir
+        // 3 satir: y = 38, 90, 142  (52px aralik)
+        for (uint8_t i = 0; i < MAX_ALARMS; i++) {
+            const AlarmEntry& a = alarms[i];
+            int16_t y = 38 + i * 52;
+            bool selected = (i == selectedIdx);
+
+            // Secili satirin arkaplanini vurgula
+            if (selected) {
+                tft.fillRect(0, y - 4, SCREEN_W, 48, 0x1082);  // koyu mavi
+            }
+
+            // Alarm no
+            tft.setTextSize(1);
+            tft.setTextColor(selected ? TFT_CYAN : TFT_DARKGREY, selected ? 0x1082 : TFT_BLACK);
+            tft.setCursor(8, y);
+            tft.printf("ALM%d", i + 1);
+
+            // Saat:Dakika - buyuk font
+            tft.setTextSize(3);
+            uint16_t timeCol;
+            if (a.firing)        timeCol = TFT_RED;
+            else if (a.enabled)  timeCol = TFT_WHITE;
+            else                 timeCol = 0x4208;  // koyu gri
+            tft.setTextColor(timeCol, selected ? 0x1082 : TFT_BLACK);
+            tft.setCursor(48, y - 4);
+            tft.printf("%02d:%02d", a.hour, a.minute);
+
+            // Durum badge
+            tft.setTextSize(1);
+            if (a.firing) {
+                tft.setTextColor(TFT_RED, selected ? 0x1082 : TFT_BLACK);
+                tft.setCursor(200, y);
+                tft.print("CALIYOR!");
+            } else if (a.snoozed) {
+                tft.setTextColor(TFT_YELLOW, selected ? 0x1082 : TFT_BLACK);
+                tft.setCursor(200, y);
+                tft.print("ERTELENDI");
+            } else {
+                // ON/OFF toggle gostergesi
+                int16_t bx = 200, by = y - 2;
+                int16_t bw = 44, bh = 18;
+                if (a.enabled) {
+                    tft.fillRoundRect(bx, by, bw, bh, 9, TFT_GREEN);
+                    tft.setTextColor(TFT_BLACK, TFT_GREEN);
+                    tft.setCursor(bx + 8, by + 5);
+                    tft.print("ACIK");
+                } else {
+                    tft.drawRoundRect(bx, by, bw, bh, 9, TFT_DARKGREY);
+                    tft.setTextColor(TFT_DARKGREY, selected ? 0x1082 : TFT_BLACK);
+                    tft.setCursor(bx + 4, by + 5);
+                    tft.print("KAPALI");
+                }
+            }
+
+            // Satir alt cizgisi (son satir haric)
+            if (i < MAX_ALARMS - 1) {
+                tft.drawFastHLine(0, y + 44, SCREEN_W, 0x2104);
+            }
         }
-        tft.setTextSize(4);
-        tft.setTextColor(TFT_WHITE, TFT_BLACK);
-        tft.setCursor(60, 80);
-        tft.printf("%02d:%02d", h, m);
+
+        // Alt yardim satiri
         tft.setTextSize(1);
-        tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-        tft.setCursor(10, 200);
-        tft.print("+/- adjust  OK enable  Long=dismiss");
+        tft.setTextColor(0x4208, TFT_BLACK);
+        tft.setCursor(4, 224);
+        tft.print("+/-:saat  OK:ac/kapat  UZUN:alt ekran");
     }
 
     void drawCountdownScreen(uint32_t leftMs, bool running) {

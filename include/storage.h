@@ -38,6 +38,7 @@ struct AppConfig {
     char             owmApiKey[33];
     int8_t           tzOffsetHours;    // signed: -12 .. +14
     uint8_t          tzOffsetMinutes;  // 0 or 30 or 45
+    uint32_t         sleepTimeoutS;    // uyku zaman asimi (saniye), 0=devre disi
 };
 
 class Storage {
@@ -61,6 +62,7 @@ public:
             strncpy(cfg.owmApiKey,     OWM_API_KEY,   32);
             cfg.tzOffsetHours   = 3;
             cfg.tzOffsetMinutes = 0;
+            cfg.sleepTimeoutS   = SLEEP_TIMEOUT_DEFAULT_S;
             save();
         }
     }
@@ -98,6 +100,11 @@ public:
         cfg.wifiCount--;
         save();
         return true;
+    }
+
+    // Ikincil konum tanimli mi?
+    bool hasSecondaryCity() const {
+        return cfg.citySecondary[0] != '\0';
     }
 
     long tzOffsetSeconds() const {

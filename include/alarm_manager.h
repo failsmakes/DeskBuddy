@@ -4,64 +4,101 @@
 #include "buzzer.h"
 
 // ============================================================
-//  alarm_manager.h  –  Alarm / Countdown / Stopwatch
+//  alarm_manager.h  -  3x Alarm / Countdown / Stopwatch
 // ============================================================
+
+#define MAX_ALARMS 3
+
+struct AlarmEntry {
+    uint8_t  hour      = 7;
+    uint8_t  minute    = 0;
+    bool     enabled   = false;
+    bool     firing    = false;
+    bool     snoozed   = false;
+    unsigned long snoozeUntilMs = 0;
+    uint8_t  lastMinuteChecked  = 255;
+};
 
 class AlarmManager {
 public:
-    // ---- Alarm ----
-    bool     alarmEnabled  = false;
-    uint8_t  alarmHour     = 7;
-    uint8_t  alarmMinute   = 0;
-    bool     alarmFiring   = false;
-    bool     alarmSnoozed  = false;
-    unsigned long snoozeUntilMs = 0;
+    // ---- 3 Alarm yuvasi ----
+    AlarmEntry alarms[MAX_ALARMS];
+
+    // Hangi alarm caliyor (255 = yok)
+    uint8_t  firingIdx    = 255;
+
+    // Kisa erisim yardimcilari (ekran ve pad kodu icin)
+    bool alarmFiring  = false;   // herhangi biri caliyor mu?
 
     // ---- Countdown ----
-    bool     countdownRunning = false;
-    bool     countdownFiring  = false;
-    uint32_t countdownSetMs   = 0;   // set duration in ms
-    uint32_t countdownLeftMs  = 0;   // remaining
+    bool     countdownRunning  = false;
+    bool     countdownFiring   = false;
+    uint32_t countdownSetMs    = 0;
+    uint32_t countdownLeftMs   = 0;
     unsigned long countdownStartedAt = 0;
 
     // ---- Stopwatch ----
-    bool     swRunning  = false;
+    bool     swRunning   = false;
     uint32_t swElapsedMs = 0;
     unsigned long swStartedAt = 0;
 
-    // ---- Called every loop ----
+    // ---- loop() icinde her iterasyonda cagir ----
     void update(struct tm& localTime) {
-        updateAlarm(localTime);
+        updateAlarms(localTime);
         updateCountdown();
-        updateStopwatch();
     }
 
-    // --- Alarm control ---
-    void setAlarm(uint8_t h, uint8_t m) { alarmHour = h; alarmMinute = m; }
-    void enableAlarm()  { alarmEnabled = true;  alarmFiring = false; }
-    void disableAlarm() { alarmEnabled = false; alarmFiring = false; buzzer.stop(); }
-    void snoozeAlarm()  {
-        alarmFiring = false;
-        alarmSnoozed = true;
-        snoozeUntilMs = millis() + ALARM_SNOOZE_MS;
+    // ---- Alarm kontrol ----
+    void setAlarm(uint8_t idx, uint8_t h, uint8_t m) {
+        if (idx >= MAX_ALARMS) return;
+        alarms[idx].hour   = h;
+        alarms[idx].minute = m;
+    }
+    void enableAlarm(uint8_t idx) {
+        if (idx >= MAX_ALARMS) return;
+        alarms[idx].enabled = true;
+        alarms[idx].firing  = false;
+    }
+    void disableAlarm(uint8_t idx) {
+        if (idx >= MAX_ALARMS) return;
+        alarms[idx].enabled = false;
+        alarms[idx].firing  = false;
+        _refreshFiringState();
+    }
+    void snoozeAlarm() {
+        if (firingIdx >= MAX_ALARMS) return;
+        alarms[firingIdx].firing       = false;
+        alarms[firingIdx].snoozed      = true;
+        alarms[firingIdx].snoozeUntilMs = millis() + ALARM_SNOOZE_MS;
         buzzer.stop();
+        _refreshFiringState();
     }
     void dismissAlarm() {
-        alarmFiring  = false;
-        alarmSnoozed = false;
-        alarmEnabled = false;
+        if (firingIdx >= MAX_ALARMS) return;
+        alarms[firingIdx].firing   = false;
+        alarms[firingIdx].snoozed  = false;
+        alarms[firingIdx].enabled  = false;
         buzzer.stop();
+        _refreshFiringState();
     }
 
-    // --- Countdown control ---
-    void countdownSet(uint32_t ms) { countdownSetMs = ms; countdownLeftMs = ms; countdownFiring = false; }
+    // Calan alarmin saat/dakika bilgisi
+    uint8_t firingHour()   { return firingIdx < MAX_ALARMS ? alarms[firingIdx].hour   : 0; }
+    uint8_t firingMinute() { return firingIdx < MAX_ALARMS ? alarms[firingIdx].minute : 0; }
+
+    // ---- Countdown ----
+    void countdownSet(uint32_t ms) {
+        countdownSetMs  = ms;
+        countdownLeftMs = ms;
+        countdownFiring = false;
+    }
     void countdownStart() {
         if (!countdownRunning && countdownLeftMs > 0) {
-            countdownRunning = true;
-            countdownStartedAt = millis();
+            countdownRunning    = true;
+            countdownStartedAt  = millis();
         }
     }
-    void countdownStop()  {
+    void countdownStop() {
         if (countdownRunning) {
             countdownLeftMs -= (millis() - countdownStartedAt);
             countdownRunning = false;
@@ -78,36 +115,25 @@ public:
         buzzer.stop();
         countdownReset();
     }
-
-    // --- Stopwatch control ---
-    void swStart() {
-        if (!swRunning) {
-            swRunning    = true;
-            swStartedAt  = millis();
-        }
-    }
-    void swStop() {
-        if (swRunning) {
-            swElapsedMs += millis() - swStartedAt;
-            swRunning = false;
-        }
-    }
-    void swReset() {
-        swRunning    = false;
-        swElapsedMs  = 0;
-    }
-
-    uint32_t swCurrent() {
-        return swRunning ? swElapsedMs + (millis() - swStartedAt) : swElapsedMs;
-    }
-
     uint32_t countdownCurrent() {
         if (!countdownRunning) return countdownLeftMs;
         uint32_t elapsed = millis() - countdownStartedAt;
         return (elapsed >= countdownLeftMs) ? 0 : countdownLeftMs - elapsed;
     }
 
-    // Format ms → "HH:MM:SS"
+    // ---- Stopwatch ----
+    void swStart() {
+        if (!swRunning) { swRunning = true; swStartedAt = millis(); }
+    }
+    void swStop() {
+        if (swRunning) { swElapsedMs += millis() - swStartedAt; swRunning = false; }
+    }
+    void swReset() { swRunning = false; swElapsedMs = 0; }
+    uint32_t swCurrent() {
+        return swRunning ? swElapsedMs + (millis() - swStartedAt) : swElapsedMs;
+    }
+
+    // Format ms -> "HH:MM:SS"
     String formatMs(uint32_t ms) {
         uint32_t s = ms / 1000;
         char buf[9];
@@ -119,30 +145,30 @@ public:
     }
 
 private:
-    bool _alarmFiredThisMinute = false;
-    uint8_t _lastMinuteChecked = 255;
+    void updateAlarms(struct tm& t) {
+        for (uint8_t i = 0; i < MAX_ALARMS; i++) {
+            AlarmEntry& a = alarms[i];
+            if (!a.enabled) continue;
 
-    void updateAlarm(struct tm& t) {
-        if (!alarmEnabled) return;
+            // Snooze suresi doldu mu?
+            if (a.snoozed && millis() >= a.snoozeUntilMs) {
+                a.snoozed = false;
+                a.firing  = true;
+            }
 
-        // Snooze check
-        if (alarmSnoozed && millis() >= snoozeUntilMs) {
-            alarmSnoozed = false;
-            alarmFiring  = true;
-        }
-
-        // Time match
-        if (!alarmFiring && !alarmSnoozed) {
-            if (t.tm_hour == alarmHour && t.tm_min == alarmMinute) {
-                if (_lastMinuteChecked != (uint8_t)t.tm_min) {
-                    _lastMinuteChecked = (uint8_t)t.tm_min;
-                    alarmFiring = true;
+            // Saat eslesme kontrolu
+            if (!a.firing && !a.snoozed) {
+                if (t.tm_hour == a.hour && t.tm_min == a.minute) {
+                    if (a.lastMinuteChecked != (uint8_t)t.tm_min) {
+                        a.lastMinuteChecked = (uint8_t)t.tm_min;
+                        a.firing = true;
+                    }
+                } else {
+                    a.lastMinuteChecked = 255;
                 }
-            } else {
-                _lastMinuteChecked = 255;
             }
         }
-
+        _refreshFiringState();
         if (alarmFiring) buzzer.startAlert();
     }
 
@@ -155,8 +181,17 @@ private:
         }
     }
 
-    void updateStopwatch() {
-        // Nothing extra needed; swCurrent() is computed on demand
+    // alarmFiring ve firingIdx'i guncelle
+    void _refreshFiringState() {
+        firingIdx   = 255;
+        alarmFiring = false;
+        for (uint8_t i = 0; i < MAX_ALARMS; i++) {
+            if (alarms[i].firing) {
+                firingIdx   = i;
+                alarmFiring = true;
+                return;
+            }
+        }
     }
 };
 

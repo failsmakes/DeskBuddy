@@ -1,23 +1,19 @@
 // ============================================================
-//  DeskBuddy  –  main.cpp
+//  DeskBuddy - main.cpp
 //
-//  Hardware: Wemos Lolin D32 + ILI9341 TFT + DHT20 + Touch pads
-//  Libraries needed (install via Arduino Library Manager):
-//    • TFT_eSPI          (Bodmer)
-//    • RoboEyesTFT       (yousseftechdev) — install manually from GitHub
-//    • ArduinoJson       (Benoit Blanchon)
-//    • WebServer         (built-in ESP32)
-//    • EEPROM            (built-in ESP32)
-//    • Wire              (built-in)
+//  Donanim: Wemos Lolin D32 + ILI9341 TFT + DHT11/22 + DS3231 RTC
+//           ZS-042 Modulu + Kapasitif Touch padler + Buzzer
 //
-//  TFT_eSPI User_Setup.h must be configured for ILI9341:
-//    #define ILI9341_DRIVER
-//    #define TFT_MOSI 23
-//    #define TFT_SCLK 18
-//    #define TFT_CS    5
-//    #define TFT_DC   16
-//    #define TFT_RST   17
-//    #define TFT_BL    32   (optional backlight pin)
+//  Gerekli Kutuphaneler:
+//    - TFT_eSPI          (Bodmer) - PlatformIO: bodmer/TFT_eSPI
+//    - RoboEyesTFT       (yousseftechdev) - manuel: lib/ klasorune kopyala
+//    - ArduinoJson       (Benoit Blanchon) - PlatformIO: bblanchon/ArduinoJson
+//    - WebServer         (ESP32 dahili)
+//    - EEPROM            (ESP32 dahili)
+//    - Wire              (ESP32 dahili)
+//
+//  TFT_eSPI platformio.ini build_flags ile yapilandirilir.
+//  User_Setup.h duzenlemeye GEREK YOKTUR.
 // ============================================================
 
 #include <Arduino.h>
@@ -25,9 +21,11 @@
 
 #include "config.h"
 #include "storage.h"
+#include "rtc_manager.h"
+#include "sleep_manager.h"
 #include "wifi_manager.h"
 #include "time_manager.h"
-#include "dht20_sensor.h"
+#include "dht_sensor.h"
 #include "touch_input.h"
 #include "buzzer.h"
 #include "weather.h"
@@ -37,19 +35,21 @@
 #include "web_server.h"
 #include "battery.h"
 
-// ─── RoboEyesTFT ─────────────────────────────────────────────
-// https://github.com/yousseftechdev/RoboEyesTFT
-// Arduino.h defines DEFAULT=1; undef before including to avoid conflict.
+// RoboEyesTFT - Arduino.h DEFAULT macro catismasini once temizle
 #ifdef DEFAULT
   #undef DEFAULT
 #endif
 #include "RoboEyesTFT_eSPI.h"
 
-// ─── Global singletons ───────────────────────────────────────
+// ============================================================
+//  Global singleton'lar
+// ============================================================
 Storage          storage;
+RTCManager       rtcManager;
+SleepManager     sleepMgr;
 WiFiManager      wifiManager;
 TimeManager      timeManager;
-DHT20Sensor      dht20;
+DHTSensor        dhtSensor(DHT_TYPE);
 TouchInput       touch;
 Buzzer           buzzer;
 Weather          weatherPrimary;
@@ -62,82 +62,93 @@ Battery          battery;
 
 RoboEyesTFT*     eyes = nullptr;
 
-// ─── Timing helpers ──────────────────────────────────────────
-unsigned long lastDHTread     = 0;
-unsigned long lastWeatherFetch= 0;
-unsigned long lastWifiMaintain= 0;
-const unsigned long DHT_INTERVAL     = 10000;   // 10 s
-const unsigned long WIFI_CHECK_MS    = 30000;   // 30 s
-const unsigned long REDRAW_INTERVAL  = 1000;    // 1 s for non-buddy screens
-unsigned long lastRedraw = 0;
+// ============================================================
+//  Zamanlama degiskenleri
+// ============================================================
+unsigned long lastDHTread      = 0;
+unsigned long lastWifiMaintain = 0;
+unsigned long lastRedraw       = 0;
+const unsigned long DHT_INTERVAL    = 10000UL;  // 10 sn
+const unsigned long WIFI_CHECK_MS   = 30000UL;  // 30 sn
+const unsigned long REDRAW_INTERVAL = 1000UL;   // 1 sn
 
-// ─── Eye colour for current mood ─────────────────────────────
+// ============================================================
+//  Yardimci fonksiyonlar
+// ============================================================
+
 uint16_t moodColour() {
     switch (appState.buddyMood) {
-        case MOOD_HAPPY:   return EYE_COLOR_HAPPY;
-        case MOOD_TIRED:   return EYE_COLOR_TIRED;
-        case MOOD_ANGRY:   return EYE_COLOR_ANGRY;
-        default:           return EYE_COLOR_DEFAULT;
+        case MOOD_HAPPY: return EYE_COLOR_HAPPY;
+        case MOOD_TIRED: return EYE_COLOR_TIRED;
+        case MOOD_ANGRY: return EYE_COLOR_ANGRY;
+        default:         return EYE_COLOR_DEFAULT;
     }
 }
 
-// ─── Apply mood to RoboEyes ───────────────────────────────────
 void applyMood(BuddyMood mood) {
     if (!eyes) return;
     eyes->setColors(moodColour(), TFT_BLACK);
     switch (mood) {
-        case MOOD_DEFAULT:
-            eyes->setMood(DEFAULT);
-            break;
-        case MOOD_HAPPY:
-            eyes->setMood(HAPPY);
-            break;
-        case MOOD_TIRED:
-            eyes->setMood(TIRED);
-            break;
-        case MOOD_ANGRY:
-            eyes->setMood(ANGRY);
-            break;
+        case MOOD_DEFAULT: eyes->setMood(DEFAULT); break;
+        case MOOD_HAPPY:   eyes->setMood(HAPPY);   break;
+        case MOOD_TIRED:   eyes->setMood(TIRED);   break;
+        case MOOD_ANGRY:   eyes->setMood(ANGRY);   break;
     }
 }
 
-// ─── Advance buddy mood one step ─────────────────────────────
 void advanceMood() {
     appState.moodSeqIdx = (appState.moodSeqIdx + 1) % MOOD_SEQUENCE_LEN;
     appState.buddyMood  = MOOD_SEQUENCE[appState.moodSeqIdx];
     applyMood(appState.buddyMood);
 }
 
-// ─── Mode transitions ─────────────────────────────────────────
+// ============================================================
+//  Mod gecisi - ikincil konum yoksa MODE_WEATHER_S atlanir
+// ============================================================
 void nextMode() {
-    int next = ((int)appState.mode + 1) % MODE_COUNT;
-    appState.mode = (AppMode)next;
+    bool hasSecondary = storage.hasSecondaryCity();
+    appState.mode = nextModeSkipSecondary(appState.mode, hasSecondary);
     appState.showSecondary = false;
+
     if (appState.mode == MODE_BUDDY) {
-        // Re-init eyes on screen
         display.tft.fillScreen(TFT_BLACK);
         applyMood(appState.buddyMood);
     } else {
-        // Eyes not needed; clear screen
         display.tft.fillScreen(TFT_BLACK);
     }
 }
 
-// ─── Handle touch events per mode ────────────────────────────
+// ============================================================
+//  Touch olaylarini isle
+// ============================================================
 void handleTouch(TouchInput::Events& ev) {
-    // ── Short tap = mode cycle (always) ──────────────────────
+    bool anyTouch = (ev.interact != TOUCH_NONE ||
+                     ev.plus     != TOUCH_NONE ||
+                     ev.minus_   != TOUCH_NONE ||
+                     ev.ok       != TOUCH_NONE);
+    if (anyTouch) sleepMgr.resetTimer();  // her dokunusta uyku sayacini sifirla
+
+    // ── Kisa dokunma: mod degis ──────────────────────────────
     if (ev.interact == TOUCH_SHORT) {
-        if (appState.mode == MODE_ALARM) {
-            // In alarm sub-screen: short tap snoozes / advances
-            if (alarmMgr.alarmFiring) { alarmMgr.snoozeAlarm(); return; }
+        if (appState.mode == MODE_ALARM && alarmMgr.alarmFiring) {
+            alarmMgr.snoozeAlarm();
+            return;
+        }
+        // Ikincil konum yokken ikincil ekrandaysak direkt ileri gec
+        if (!storage.hasSecondaryCity() && appState.showSecondary) {
+            appState.showSecondary = false;
+            nextMode();
+            buzzer.beep(50);
+            return;
         }
         nextMode();
         buzzer.beep(50);
         return;
     }
 
-    // ── Long press = mode-specific action ────────────────────
+    // ── Uzun basma: moda ozgu islem ─────────────────────────
     if (ev.interact == TOUCH_LONG) {
+        // Ikincil konum yoksa uzun basma ikincil ekrana gecmemeli
         switch (appState.mode) {
             case MODE_BUDDY:
                 advanceMood();
@@ -145,18 +156,35 @@ void handleTouch(TouchInput::Events& ev) {
                 break;
 
             case MODE_DATETIME:
-                appState.showSecondary = !appState.showSecondary;
+                if (storage.hasSecondaryCity()) {
+                    appState.showSecondary = !appState.showSecondary;
+                }
+                // Ikincil konum yoksa uzun basma buddy'de bir sonraki moda gider
+                else {
+                    nextMode();
+                    buzzer.beep(50);
+                }
                 break;
 
             case MODE_WEATHER_P:
+                // Ikincil konum varsa 5 gunluk tahmine gec; yoksa sonraki moda gec
+                if (!appState.showSecondary) {
+                    appState.showSecondary = true;
+                } else {
+                    appState.showSecondary = false;
+                    nextMode();
+                    buzzer.beep(50);
+                }
+                break;
+
             case MODE_WEATHER_S:
+                // Bu moda sadece ikincil konum tanimli ise gelinir
                 appState.showSecondary = !appState.showSecondary;
                 break;
 
             case MODE_ALARM:
-                if (alarmMgr.alarmFiring)       { alarmMgr.dismissAlarm(); return; }
-                if (alarmMgr.countdownFiring)    { alarmMgr.countdownDismiss(); return; }
-                // Cycle alarm sub-screens
+                if (alarmMgr.alarmFiring)    { alarmMgr.dismissAlarm();     return; }
+                if (alarmMgr.countdownFiring) { alarmMgr.countdownDismiss(); return; }
                 appState.alarmSub = (AlarmSubScreen)
                     (((int)appState.alarmSub + 1) % (int)ALARM_SUB_COUNT);
                 break;
@@ -166,53 +194,66 @@ void handleTouch(TouchInput::Events& ev) {
         return;
     }
 
-    // ── +, -, OK pads (used in alarm mode) ───────────────────
+    // ── +, -, OK padleri (alarm modunda) ────────────────────
     if (appState.mode != MODE_ALARM) return;
 
     switch (appState.alarmSub) {
-        case ALARM_SUB_ALARM:
-            if (ev.plus  == TOUCH_SHORT) { alarmMgr.alarmMinute = (alarmMgr.alarmMinute + 1) % 60; }
-            if (ev.minus_ == TOUCH_SHORT) { alarmMgr.alarmMinute = (alarmMgr.alarmMinute + 59) % 60; }
-            if (ev.plus  == TOUCH_LONG)  { alarmMgr.alarmHour = (alarmMgr.alarmHour + 1) % 24; }
-            if (ev.minus_ == TOUCH_LONG) { alarmMgr.alarmHour = (alarmMgr.alarmHour + 23) % 24; }
-            if (ev.ok    == TOUCH_SHORT) {
-                if (alarmMgr.alarmEnabled) alarmMgr.disableAlarm();
-                else                       alarmMgr.enableAlarm();
+        case ALARM_SUB_ALARM: {
+            uint8_t idx = appState.selectedAlarm;
+            // + kisa: dakika +1
+            if (ev.plus   == TOUCH_SHORT) alarmMgr.alarms[idx].minute = (alarmMgr.alarms[idx].minute + 1) % 60;
+            // - kisa: dakika -1
+            if (ev.minus_ == TOUCH_SHORT) alarmMgr.alarms[idx].minute = (alarmMgr.alarms[idx].minute + 59) % 60;
+            // + uzun: saat +1
+            if (ev.plus   == TOUCH_LONG)  alarmMgr.alarms[idx].hour   = (alarmMgr.alarms[idx].hour + 1) % 24;
+            // - uzun: saat -1
+            if (ev.minus_ == TOUCH_LONG)  alarmMgr.alarms[idx].hour   = (alarmMgr.alarms[idx].hour + 23) % 24;
+            // OK kisa: ac/kapat
+            if (ev.ok == TOUCH_SHORT) {
+                if (alarmMgr.alarms[idx].enabled) alarmMgr.disableAlarm(idx);
+                else                               alarmMgr.enableAlarm(idx);
+            }
+            // OK uzun: sonraki alarm yuvasina gec (0->1->2->0)
+            if (ev.ok == TOUCH_LONG) {
+                appState.selectedAlarm = (appState.selectedAlarm + 1) % MAX_ALARMS;
+                buzzer.beep(40);
             }
             break;
+        }
 
         case ALARM_SUB_COUNTDOWN: {
-            uint32_t step = 60000; // 1 min step
+            uint32_t step = 60000;
             if (ev.plus   == TOUCH_SHORT) alarmMgr.countdownSet(alarmMgr.countdownSetMs + step);
-            if (ev.minus_  == TOUCH_SHORT && alarmMgr.countdownSetMs >= step)
+            if (ev.minus_ == TOUCH_SHORT && alarmMgr.countdownSetMs >= step)
                 alarmMgr.countdownSet(alarmMgr.countdownSetMs - step);
             if (ev.ok     == TOUCH_SHORT) {
                 if (alarmMgr.countdownRunning) alarmMgr.countdownStop();
                 else                           alarmMgr.countdownStart();
             }
-            if (ev.ok     == TOUCH_LONG) alarmMgr.countdownReset();
+            if (ev.ok == TOUCH_LONG) alarmMgr.countdownReset();
             break;
         }
 
         case ALARM_SUB_STOPWATCH:
-            if (ev.ok    == TOUCH_SHORT) {
+            if (ev.ok == TOUCH_SHORT) {
                 if (alarmMgr.swRunning) alarmMgr.swStop();
                 else                    alarmMgr.swStart();
             }
-            if (ev.ok    == TOUCH_LONG) alarmMgr.swReset();
+            if (ev.ok == TOUCH_LONG) alarmMgr.swReset();
             break;
 
         default: break;
     }
 }
 
-// ─── Draw current screen ─────────────────────────────────────
+// ============================================================
+//  Ekran cizim
+// ============================================================
 void drawCurrentScreen() {
     struct tm t = timeManager.getLocalTime();
 
     switch (appState.mode) {
         case MODE_BUDDY:
-            // RoboEyesTFT handles its own draw loop
             if (eyes) eyes->update();
             break;
 
@@ -220,8 +261,6 @@ void drawCurrentScreen() {
             if (!appState.showSecondary) {
                 display.drawDateTime(t, false);
             } else {
-                // Secondary city time — apply tz offset difference roughly
-                // For simplicity show same NTP time + city name (full tz offset support needs separate NTP)
                 display.drawDateTime(t, true,
                     storage.cfg.citySecondary,
                     weatherSecondary.valid ? &weatherSecondary.current : nullptr);
@@ -229,25 +268,23 @@ void drawCurrentScreen() {
             break;
 
         case MODE_WEATHER_P:
-            if (!appState.showSecondary) {
+            if (!appState.showSecondary)
                 display.drawWeatherCurrent(weatherPrimary.current, storage.cfg.cityPrimary);
-            } else {
+            else
                 display.drawForecast(weatherPrimary.forecast);
-            }
             break;
 
         case MODE_WEATHER_S:
-            if (!appState.showSecondary) {
+            if (!appState.showSecondary)
                 display.drawWeatherCurrent(weatherSecondary.current, storage.cfg.citySecondary);
-            } else {
+            else
                 display.drawForecast(weatherSecondary.forecast);
-            }
             break;
 
         case MODE_ALARM:
             switch (appState.alarmSub) {
                 case ALARM_SUB_ALARM:
-                    display.drawAlarmScreen(alarmMgr.alarmHour, alarmMgr.alarmMinute, alarmMgr.alarmEnabled);
+                    display.drawAlarmScreen(alarmMgr.alarms, appState.selectedAlarm);
                     break;
                 case ALARM_SUB_COUNTDOWN:
                     display.drawCountdownScreen(alarmMgr.countdownCurrent(), alarmMgr.countdownRunning);
@@ -260,7 +297,6 @@ void drawCurrentScreen() {
     }
 }
 
-// ─── Show "alarm firing" overlay ─────────────────────────────
 void drawAlarmFiringOverlay() {
     display.tft.fillScreen(TFT_RED);
     display.tft.setTextColor(TFT_WHITE, TFT_RED);
@@ -277,56 +313,67 @@ void drawAlarmFiringOverlay() {
 // ============================================================
 void setup() {
     Serial.begin(115200);
-    Serial.println("\n[DeskBuddy] Booting…");
+    Serial.println("\n[DeskBuddy] Booting...");
 
-    // Storage
+    // Uyku modundan uyanilip uyanilmadigini kontrol et
+    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+    bool wokenFromSleep = (cause == ESP_SLEEP_WAKEUP_TOUCHPAD ||
+                           cause == ESP_SLEEP_WAKEUP_EXT0);
+    if (wokenFromSleep) Serial.println("[DeskBuddy] Woke from deep sleep");
+
+    // 1. EEPROM / Konfigurasyonu yukle
     storage.begin();
 
-    // Display
+    // 2. Ekran
     display.begin();
     display.drawLogo();
 
-    // DHT20
-    dht20.begin();
+    // 3. RTC (Wire baslatir)
+    rtcManager.begin();
 
-    // Buzzer
+    // 4. Uyku yoneticisi
+    sleepMgr.begin();
+    sleepMgr.setTimeoutSeconds(storage.cfg.sleepTimeoutS);
+
+    // 5. DHT sensoru
+    dhtSensor.begin();
+
+    // 6. Buzzer
     buzzer.begin();
 
-    // Batarya
+    // 7. Batarya ADC
     battery.begin();
 
-    // WiFi
+    // 8. WiFi
     bool wifiOK = wifiManager.begin();
-
     if (!wifiOK) {
-        // Show AP splash before waiting
         display.drawAPSplash(wifiManager.apSSID.c_str(),
                              wifiManager.apIP.toString().c_str());
         delay(2000);
     }
 
-    // Time (needs WiFi)
-    if (wifiOK) {
-        timeManager.begin();
-    }
+    // 9. Zaman (NTP > RTC fallback)
+    timeManager.begin();
 
-    // Web server (works in both STA and AP mode)
+    // 10. Web sunucu
     webServer.begin();
 
-    // Initial weather fetch
+    // 11. Hava durumu ilk cekim (WiFi varsa)
     if (wifiOK && storage.cfg.owmApiKey[0]) {
         weatherPrimary.fetch(storage.cfg.cityPrimary, true);
-        weatherSecondary.fetch(storage.cfg.citySecondary, false);
+        if (storage.hasSecondaryCity()) {
+            weatherSecondary.fetch(storage.cfg.citySecondary, false);
+        }
     }
 
-    // Wait out logo duration (already showed logo above)
+    // 12. Logo sure tamamlanana kadar bekle
     unsigned long logoStart = millis();
     while (millis() - logoStart < LOGO_DISPLAY_MS) {
         webServer.loop();
         delay(50);
     }
 
-    // Init RoboEyesTFT for buddy mode
+    // 13. RoboEyesTFT baslatma
     eyes = new RoboEyesTFT(display.tft);
     eyes->begin();
     eyes->setAutoblinker(true, 3, 2);
@@ -334,7 +381,6 @@ void setup() {
     eyes->setCuriosity(0.7f);
     applyMood(MOOD_DEFAULT);
 
-    // Clear screen, enter buddy mode
     display.tft.fillScreen(TFT_BLACK);
     Serial.println("[DeskBuddy] Ready!");
 }
@@ -345,43 +391,43 @@ void setup() {
 void loop() {
     unsigned long now = millis();
 
-    // ── Web server ──────────────────────────────────────────
+    // Web sunucu
     webServer.loop();
 
-    // ── Touch input ─────────────────────────────────────────
+    // Touch okuma
     TouchInput::Events ev = touch.poll();
     handleTouch(ev);
 
-    // ── DHT20 ───────────────────────────────────────────────
+    // DHT sensoru guncelleme
     if (now - lastDHTread > DHT_INTERVAL) {
-        dht20.read();
+        dhtSensor.read();
         lastDHTread = now;
     }
 
-    // ── Batarya ─────────────────────────────────────────────
+    // Batarya guncelleme
     battery.update();
 
-    // ── Alarm / countdown / stopwatch ───────────────────────
+    // Alarm / geri sayim / kronometre
     struct tm localT = timeManager.getLocalTime();
     alarmMgr.update(localT);
     buzzer.update();
 
-    // ── Alarm firing overlay ─────────────────────────────────
+    // Alarm calisiyor overlay
     if (alarmMgr.alarmFiring || alarmMgr.countdownFiring) {
-        // Override screen with overlay each second
         if (now - lastRedraw > 500) {
             drawAlarmFiringOverlay();
-            // RoboEyes happy popup while alarm fires
             if (eyes && appState.mode == MODE_BUDDY) {
                 eyes->setMood(HAPPY);
                 eyes->setColors(EYE_COLOR_HAPPY, TFT_BLACK);
             }
             lastRedraw = now;
         }
-        return;  // Don't draw normal screen while alarm fires
+        // Alarm calarken uyku moduna girme
+        sleepMgr.resetTimer();
+        return;
     }
 
-    // ── WiFi maintain ────────────────────────────────────────
+    // WiFi baglanti kontrolu
     if (now - lastWifiMaintain > WIFI_CHECK_MS) {
         wifiManager.maintain();
         lastWifiMaintain = now;
@@ -390,23 +436,27 @@ void loop() {
         }
     }
 
-    // ── Weather update ───────────────────────────────────────
+    // Hava durumu guncelleme
     if (wifiManager.isConnected && storage.cfg.owmApiKey[0]) {
-        if (weatherPrimary.needsUpdate())   weatherPrimary.fetch(storage.cfg.cityPrimary);
-        if (weatherSecondary.needsUpdate()) weatherSecondary.fetch(storage.cfg.citySecondary);
+        if (weatherPrimary.needsUpdate())
+            weatherPrimary.fetch(storage.cfg.cityPrimary);
+        if (storage.hasSecondaryCity() && weatherSecondary.needsUpdate())
+            weatherSecondary.fetch(storage.cfg.citySecondary);
     }
 
-    // ── Screen draw ──────────────────────────────────────────
+    // Ekran guncelleme
     if (appState.mode == MODE_BUDDY) {
-        // RoboEyes runs at its own frame rate
         if (eyes) eyes->update();
     } else {
-        // Other screens: redraw at 1 Hz (stopwatch: 100ms)
         uint32_t interval = (appState.mode == MODE_ALARM &&
-                             appState.alarmSub == ALARM_SUB_STOPWATCH) ? 100 : REDRAW_INTERVAL;
+                             appState.alarmSub == ALARM_SUB_STOPWATCH)
+                            ? 100 : REDRAW_INTERVAL;
         if (now - lastRedraw > interval) {
             drawCurrentScreen();
             lastRedraw = now;
         }
     }
+
+    // Uyku modu kontrolu (en sona - her sey tamamlandiktan sonra)
+    sleepMgr.update();
 }
