@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <Wire.h>
+#include <stdlib.h>
 #include <time.h>
 #include "config.h"
 
@@ -31,6 +32,19 @@
 static inline uint8_t bcd2dec(uint8_t b) { return (b >> 4) * 10 + (b & 0x0F); }
 static inline uint8_t dec2bcd(uint8_t d) { return ((d / 10) << 4) | (d % 10); }
 
+static time_t utc_mktime(struct tm* t) {
+    char tzBuf[64] = {0};
+    char* oldTz = getenv("TZ");
+    if (oldTz) strncpy(tzBuf, oldTz, sizeof(tzBuf) - 1);
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    time_t epoch = mktime(t);
+    if (oldTz) setenv("TZ", tzBuf, 1);
+    else unsetenv("TZ");
+    tzset();
+    return epoch;
+}
+
 class RTCManager {
 public:
     bool available = false;   // DS3231 bulundu mu?
@@ -51,7 +65,7 @@ public:
         }
     }
 
-    // RTC'den time_t yap. Basarisiz olursa 0 doner.
+    // RTC'den time_t yap. RTC'ye UTC olarak yaziyoruz, bu nedenle okurken de UTC cinsinden epoch hesaplamaliyiz.
     time_t readTime() {
         if (!available) return 0;
 
@@ -80,7 +94,8 @@ public:
         t.tm_year  = yr + 100;        // 2000+yr - 1900
         t.tm_isdst = 0;
 
-        time_t epoch = mktime(&t);
+        // DS3231 time is stored as UTC when we write it, so convert with UTC semantics.
+        time_t epoch = utc_mktime(&t);
         valid = (epoch > 0);
         return epoch;
     }

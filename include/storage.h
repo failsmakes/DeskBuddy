@@ -76,6 +76,18 @@ public:
                 cfg.alarms[i] = { 7, 0, false };
             }
             save();
+        } else {
+            // Sanitize stored timezone values to avoid invalid offsets.
+            bool sanitized = false;
+            if (cfg.tzOffsetHours < -12 || cfg.tzOffsetHours > 14) {
+                cfg.tzOffsetHours = 3;
+                sanitized = true;
+            }
+            if (cfg.tzOffsetMinutes != 0 && cfg.tzOffsetMinutes != 30 && cfg.tzOffsetMinutes != 45) {
+                cfg.tzOffsetMinutes = 0;
+                sanitized = true;
+            }
+            if (sanitized) save();
         }
     }
 

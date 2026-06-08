@@ -55,8 +55,7 @@ public:
             lastSyncMs     = millis();
 
             time_t utcNow = time(nullptr);
-            struct tm lt;
-            localtime_r(&utcNow, &lt);
+            struct tm lt = getLocalTime();
             DLOGF("[Time] NTP OK  UTC=%lu  Local=%02d:%02d:%02d %02d.%02d.%04d",
                   (unsigned long)utcNow,
                   lt.tm_hour, lt.tm_min, lt.tm_sec,
@@ -75,8 +74,7 @@ public:
                     rtcUsed        = true;
                     _firstSyncDone = true;
                     lastSyncMs     = millis();
-                    struct tm lt;
-                    localtime_r(&rtcUtc, &lt);
+                    struct tm lt = getLocalTime();
                     DLOGF("[Time] RTC OK  UTC=%lu  Local=%02d:%02d:%02d",
                           (unsigned long)rtcUtc,
                           lt.tm_hour, lt.tm_min, lt.tm_sec);
@@ -131,9 +129,10 @@ public:
 
     struct tm getLocalTime() {
         time_t now = time(nullptr);
+        time_t localEpoch = now + storage.tzOffsetSeconds();
         struct tm t;
         memset(&t, 0, sizeof(t));
-        localtime_r(&now, &t);
+        gmtime_r(&localEpoch, &t);
         return t;
     }
 
