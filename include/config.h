@@ -52,11 +52,11 @@
 #define LOGO_FG_COLOR         0x07FF // cyan (RGB565)
 #define LOGO_BG_COLOR         0x0000 // siyah
 
-// ---- DeskBuddy logo (16x16 monochrome 1-bit bitmap) ----
+// ---- DeskBuddy logo (200x200 monochrome 1-bit bitmap) ----
 // image2cpp ile olusturuldu (javl.github.io/image2cpp)
-// Format: Horizontal, 1 bit/pixel, LSB first
-// Kendi logonuzla degistirin.
-// 'Fails&Makes_Logo_Monochrome_1064x1064', 200x200px
+// Format: Horizontal, 1 bit/pixel, MSB first
+// Her satir: 25 byte (200px / 8 = 25)
+// Toplam: 200 * 25 = 5000 byte
 static const uint8_t LOGO_BITMAP[] PROGMEM = {
 0x00, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
 0xff, 0xff, 0xff, 0xff, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xff, 0xff, 0xff, 
@@ -372,9 +372,9 @@ static const uint8_t LOGO_BITMAP[] PROGMEM = {
 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 
 0xff, 0xff, 0xff, 0xf0, 0x00, 0x00, 0x00, 0x00
 };
-#define LOGO_W 200
-#define LOGO_H 200
-#define LOGO_SCALE 1   // 128x128 piksel olarak ciz
+#define LOGO_W    200
+#define LOGO_H    200
+#define LOGO_SCALE  1
 
 // ---------- WiFi / EEPROM ----------
 #define MAX_WIFI_NETWORKS      5

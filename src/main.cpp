@@ -128,22 +128,31 @@ void handleTouch(TouchInput::Events& ev) {
                      ev.plus     != TOUCH_NONE ||
                      ev.minus_   != TOUCH_NONE ||
                      ev.ok       != TOUCH_NONE);
-    if (anyTouch) sleepMgr.resetTimer();  // her dokunusta uyku sayacini sifirla
+    if (anyTouch) {
+        sleepMgr.resetTimer();
+        DLOGF("[handleTouch] EVENT interact=%d plus=%d minus=%d ok=%d  mode=%d",
+              (int)ev.interact, (int)ev.plus,
+              (int)ev.minus_,   (int)ev.ok,
+              (int)appState.mode);
+    }
 
     // ── Kisa dokunma: mod degis ──────────────────────────────
     if (ev.interact == TOUCH_SHORT) {
         if (appState.mode == MODE_ALARM && alarmMgr.alarmFiring) {
+            DLOG("[handleTouch] -> snoozeAlarm");
             alarmMgr.snoozeAlarm();
             return;
         }
-        // Ikincil konum yokken ikincil ekrandaysak direkt ileri gec
         if (!storage.hasSecondaryCity() && appState.showSecondary) {
             appState.showSecondary = false;
+            DLOGF("[handleTouch] -> nextMode (skip secondary), new mode=%d", (int)appState.mode);
             nextMode();
             buzzer.beep(50);
             return;
         }
+        DLOGF("[handleTouch] -> nextMode, current=%d", (int)appState.mode);
         nextMode();
+        DLOGF("[handleTouch]    new mode=%d", (int)appState.mode);
         buzzer.beep(50);
         return;
     }
