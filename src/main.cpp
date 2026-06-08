@@ -111,6 +111,7 @@ void nextMode() {
     bool hasSecondary = storage.hasSecondaryCity();
     appState.mode = nextModeSkipSecondary(appState.mode, hasSecondary);
     appState.showSecondary = false;
+    display.invalidate();   // yeni mod icin tam yeniden cizimi zorla
 
     if (appState.mode == MODE_BUDDY) {
         display.tft.fillScreen(TFT_BLACK);
@@ -169,6 +170,7 @@ void handleTouch(TouchInput::Events& ev) {
             case MODE_DATETIME:
                 if (storage.hasSecondaryCity()) {
                     appState.showSecondary = !appState.showSecondary;
+                    display.invalidate();
                 }
                 // Ikincil konum yoksa uzun basma buddy'de bir sonraki moda gider
                 else {
@@ -181,8 +183,10 @@ void handleTouch(TouchInput::Events& ev) {
                 // Ikincil konum varsa 5 gunluk tahmine gec; yoksa sonraki moda gec
                 if (!appState.showSecondary) {
                     appState.showSecondary = true;
+                    display.invalidate();
                 } else {
                     appState.showSecondary = false;
+                    display.invalidate();
                     nextMode();
                     buzzer.beep(50);
                 }
@@ -191,6 +195,7 @@ void handleTouch(TouchInput::Events& ev) {
             case MODE_WEATHER_S:
                 // Bu moda sadece ikincil konum tanimli ise gelinir
                 appState.showSecondary = !appState.showSecondary;
+                display.invalidate();
                 break;
 
             case MODE_ALARM:
@@ -198,6 +203,7 @@ void handleTouch(TouchInput::Events& ev) {
                 if (alarmMgr.countdownFiring) { alarmMgr.countdownDismiss(); return; }
                 appState.alarmSub = (AlarmSubScreen)
                     (((int)appState.alarmSub + 1) % (int)ALARM_SUB_COUNT);
+                display.invalidate();
                 break;
 
             default: break;

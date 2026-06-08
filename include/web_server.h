@@ -8,6 +8,7 @@
 #include "alarm_manager.h"
 #include "sleep_manager.h"
 #include "wifi_manager.h"
+#include "time_manager.h"
 
 // ============================================================
 //  web_server.h  -  DeskBuddy Konfigurasyon Web Sunucusu
@@ -517,6 +518,8 @@ private:
         if (owmKey.length()) strncpy(storage.cfg.owmApiKey, owmKey.c_str(), 64);
         storage.cfg.tzOffsetHours = tzH;
         storage.save();
+        // Timezone degistiyse yeniden uygula
+        timeManager.applyTimezone();
         server.send(200, "text/plain", "OK");
     }
 
