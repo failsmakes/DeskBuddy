@@ -43,11 +43,11 @@ public:
         Wire.beginTransmission(DS3231_ADDR);
         available = (Wire.endTransmission() == 0);
         if (available) {
-            Serial.println("[RTC] DS3231 found on I2C bus");
+            DLOG("[RTC] DS3231 found on I2C bus");
             // Oscillator stop flag temizle (ilk acilista gerekebilir)
             clearOscillatorStopFlag();
         } else {
-            Serial.println("[RTC] DS3231 not found - RTC backup disabled");
+            DLOG("[RTC] DS3231 not found - RTC backup disabled");
         }
     }
 
@@ -104,7 +104,7 @@ public:
         bool ok = (Wire.endTransmission() == 0);
         if (ok) {
             valid = true;
-            Serial.println("[RTC] Time written to DS3231");
+            DLOG("[RTC] Time written to DS3231");
         }
         return ok;
     }
@@ -138,7 +138,7 @@ private:
             Wire.write(0x0F);
             Wire.write(status & ~0x80);
             Wire.endTransmission();
-            Serial.println("[RTC] Warning: oscillator stop flag was set (power loss?)");
+            DLOG("[RTC] Warning: oscillator stop flag was set (power loss?)");
         }
     }
 };

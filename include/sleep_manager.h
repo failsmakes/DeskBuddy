@@ -59,7 +59,7 @@ public:
 
     // Ekrani kapat ve derin uykuya gec
     void goToSleep() {
-        Serial.println("[Sleep] Entering deep sleep...");
+        DLOG("[Sleep] Entering deep sleep...");
         Serial.flush();
 
         // Ekrani kapat

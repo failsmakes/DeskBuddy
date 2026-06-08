@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include "config.h"
+#include "storage.h"
 #include "buzzer.h"
 
 // ============================================================
@@ -42,6 +43,32 @@ public:
     uint32_t swElapsedMs = 0;
     unsigned long swStartedAt = 0;
 
+    // ---- EEPROM entegrasyonu ----
+
+    // Boot'ta storage'dan alarm verilerini yukle
+    void loadFromStorage() {
+        for (uint8_t i = 0; i < MAX_ALARMS; i++) {
+            alarms[i].hour    = storage.cfg.alarms[i].hour;
+            alarms[i].minute  = storage.cfg.alarms[i].minute;
+            alarms[i].enabled = storage.cfg.alarms[i].enabled;
+            // Runtime state'leri sifirla
+            alarms[i].firing              = false;
+            alarms[i].snoozed             = false;
+            alarms[i].snoozeUntilMs       = 0;
+            alarms[i].lastMinuteChecked   = 255;
+        }
+    }
+
+    // Alarm degisikliklerini EEPROM'a kaydet
+    void saveToStorage() {
+        for (uint8_t i = 0; i < MAX_ALARMS; i++) {
+            storage.cfg.alarms[i].hour    = alarms[i].hour;
+            storage.cfg.alarms[i].minute  = alarms[i].minute;
+            storage.cfg.alarms[i].enabled = alarms[i].enabled;
+        }
+        storage.save();
+    }
+
     // ---- loop() icinde her iterasyonda cagir ----
     void update(struct tm& localTime) {
         updateAlarms(localTime);
@@ -53,17 +80,20 @@ public:
         if (idx >= MAX_ALARMS) return;
         alarms[idx].hour   = h;
         alarms[idx].minute = m;
+        // Not: save() enableAlarm/disableAlarm'dan cagrilir
     }
     void enableAlarm(uint8_t idx) {
         if (idx >= MAX_ALARMS) return;
         alarms[idx].enabled = true;
         alarms[idx].firing  = false;
+        saveToStorage();
     }
     void disableAlarm(uint8_t idx) {
         if (idx >= MAX_ALARMS) return;
         alarms[idx].enabled = false;
         alarms[idx].firing  = false;
         _refreshFiringState();
+        saveToStorage();
     }
     void snoozeAlarm() {
         if (firingIdx >= MAX_ALARMS) return;

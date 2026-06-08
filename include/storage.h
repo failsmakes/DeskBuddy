@@ -29,16 +29,24 @@ struct WiFiCredential {
     char pass[WIFI_PASS_LEN];
 };
 
+// EEPROM'da saklanan alarm verisi
+struct StoredAlarm {
+    uint8_t hour;
+    uint8_t minute;
+    bool    enabled;
+};
+
 struct AppConfig {
     uint8_t          magic;
     uint8_t          wifiCount;
     WiFiCredential   wifiList[MAX_WIFI_NETWORKS];
     char             cityPrimary[33];
     char             citySecondary[33];
-    char             owmApiKey[33];
+    char             owmApiKey[65];    // OWM API key (max 64 chars + null)
     int8_t           tzOffsetHours;    // signed: -12 .. +14
     uint8_t          tzOffsetMinutes;  // 0 or 30 or 45
     uint32_t         sleepTimeoutS;    // uyku zaman asimi (saniye), 0=devre disi
+    StoredAlarm      alarms[3];        // 3 alarm yuvasi
 };
 
 class Storage {
@@ -59,10 +67,14 @@ public:
             cfg.wifiCount = 0;
             strncpy(cfg.cityPrimary,   "Istanbul,TR", 32);
             strncpy(cfg.citySecondary, "London,GB",   32);
-            strncpy(cfg.owmApiKey,     OWM_API_KEY,   32);
+            strncpy(cfg.owmApiKey,     "",            32);
             cfg.tzOffsetHours   = 3;
             cfg.tzOffsetMinutes = 0;
             cfg.sleepTimeoutS   = SLEEP_TIMEOUT_DEFAULT_S;
+            // Alarm varsayilanlari: hepsi kapali, 07:00
+            for (int i = 0; i < 3; i++) {
+                cfg.alarms[i] = { 7, 0, false };
+            }
             save();
         }
     }

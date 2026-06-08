@@ -18,6 +18,8 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include "soc/soc.h"           // WRITE_PERI_REG
+#include "soc/rtc_cntl_reg.h"  // RTC_CNTL_BROWN_OUT_REG
 
 #include "config.h"
 #include "storage.h"
@@ -208,13 +210,14 @@ void handleTouch(TouchInput::Events& ev) {
             if (ev.plus   == TOUCH_LONG)  alarmMgr.alarms[idx].hour   = (alarmMgr.alarms[idx].hour + 1) % 24;
             // - uzun: saat -1
             if (ev.minus_ == TOUCH_LONG)  alarmMgr.alarms[idx].hour   = (alarmMgr.alarms[idx].hour + 23) % 24;
-            // OK kisa: ac/kapat
+            // OK kisa: ac/kapat (enable/disable zaten saveToStorage cagiriyor)
             if (ev.ok == TOUCH_SHORT) {
                 if (alarmMgr.alarms[idx].enabled) alarmMgr.disableAlarm(idx);
                 else                               alarmMgr.enableAlarm(idx);
             }
-            // OK uzun: sonraki alarm yuvasina gec (0->1->2->0)
+            // OK uzun: sonraki alarm yuvasina gec, mevcut saati kaydet
             if (ev.ok == TOUCH_LONG) {
+                alarmMgr.saveToStorage();  // saat/dakika degisikliklerini kaydet
                 appState.selectedAlarm = (appState.selectedAlarm + 1) % MAX_ALARMS;
                 buzzer.beep(40);
             }
@@ -312,17 +315,29 @@ void drawAlarmFiringOverlay() {
 //  setup()
 // ============================================================
 void setup() {
+    // Brownout detector'i devre disi birak.
+    // WiFi AP baslatmasi ani yuksek akim ceker (~350mA).
+    // Zayif besleme (USB kablo, hub) ile gerilim dusup brownout
+    // reset dongusune girilir. Bu satir bunu onler.
+    // NOT: Gercek dusuk batarya durumunda koruma kalmaz,
+    //      bu nedenle batarya voltaj izleme (battery.h) onemlidir.
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+    #if DEBUG_SERIAL
     Serial.begin(115200);
-    Serial.println("\n[DeskBuddy] Booting...");
+    #endif
+    DLOG("\n[DeskBuddy] Booting...");
 
     // Uyku modundan uyanilip uyanilmadigini kontrol et
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
     bool wokenFromSleep = (cause == ESP_SLEEP_WAKEUP_TOUCHPAD ||
                            cause == ESP_SLEEP_WAKEUP_EXT0);
-    if (wokenFromSleep) Serial.println("[DeskBuddy] Woke from deep sleep");
+    if (wokenFromSleep) DLOG("[DeskBuddy] Woke from deep sleep");
 
     // 1. EEPROM / Konfigurasyonu yukle
     storage.begin();
+    // Alarm verilerini EEPROM'dan yukle
+    alarmMgr.loadFromStorage();
 
     // 2. Ekran
     display.begin();
@@ -335,22 +350,29 @@ void setup() {
     sleepMgr.begin();
     sleepMgr.setTimeoutSeconds(storage.cfg.sleepTimeoutS);
 
-    // 5. DHT sensoru
-    dhtSensor.begin();
-
-    // 6. Buzzer
+    // 5. Buzzer
     buzzer.begin();
 
-    // 7. Batarya ADC
+    // 6. Batarya ADC
     battery.begin();
 
-    // 8. WiFi
+    // 7. WiFi - DHT'den ONCE baslatilmali
     bool wifiOK = wifiManager.begin();
+
     if (!wifiOK) {
-        display.drawAPSplash(wifiManager.apSSID.c_str(),
-                             wifiManager.apIP.toString().c_str());
-        delay(2000);
+        // AP modunda: SSID ve IP ekranda goster
+        // softAPIP() bazi durumlarda 0.0.0.0 donebilir,
+        // 1sn bekleyip tekrar sorgula
+        delay(1000);
+        String apIPStr = WiFi.softAPIP().toString();
+        if (apIPStr == "0.0.0.0") apIPStr = "192.168.4.1";
+        display.drawAPSplash(wifiManager.apSSID.c_str(), apIPStr.c_str());
+        DLOGF("[Setup] AP splash shown: %s  %s\n",
+                      wifiManager.apSSID.c_str(), apIPStr.c_str());
     }
+
+    // 8. DHT sensoru (2sn delay icerir - WiFi basladiktan sonra)
+    dhtSensor.begin();
 
     // 9. Zaman (NTP > RTC fallback)
     timeManager.begin();
@@ -367,22 +389,31 @@ void setup() {
     }
 
     // 12. Logo sure tamamlanana kadar bekle
-    unsigned long logoStart = millis();
-    while (millis() - logoStart < LOGO_DISPLAY_MS) {
-        webServer.loop();
-        delay(50);
+    // AP modundaysa logo yerine AP splash gosteriliyor, beklemeye gerek yok
+    if (wifiOK) {
+        unsigned long logoStart = millis();
+        while (millis() - logoStart < LOGO_DISPLAY_MS) {
+            webServer.loop();
+            delay(50);
+        }
+    } else {
+        // AP modunda: splash ekranda kalsin, web sunucusu calissin
+        delay(100);
     }
 
-    // 13. RoboEyesTFT baslatma
-    eyes = new RoboEyesTFT(display.tft);
-    eyes->begin();
-    eyes->setAutoblinker(true, 3, 2);
-    eyes->setIdleMode(true, 4, 1);
-    eyes->setCuriosity(0.7f);
-    applyMood(MOOD_DEFAULT);
+    // 13. RoboEyesTFT - sadece STA modunda baslatilir
+    // AP modunda buddy gosterilmez, ekranda AP splash kalir
+    if (wifiOK) {
+        eyes = new RoboEyesTFT(display.tft);
+        eyes->begin();
+        eyes->setAutoblinker(true, 3, 2);
+        eyes->setIdleMode(true, 4, 1);
+        eyes->setCuriosity(0.7f);
+        applyMood(MOOD_DEFAULT);
+        display.tft.fillScreen(TFT_BLACK);
+    }
 
-    display.tft.fillScreen(TFT_BLACK);
-    Serial.println("[DeskBuddy] Ready!");
+    DLOG("[DeskBuddy] Ready!");
 }
 
 // ============================================================
@@ -391,15 +422,26 @@ void setup() {
 void loop() {
     unsigned long now = millis();
 
-    // Web sunucu
+    // Web sunucu - her modda calisir
     webServer.loop();
+
+    // AP modunda sadece web sunucusu ve uyku zamanlayicisi calisir
+    // Ekrana dokunulursa uyku sayaci sifirlanir, baska bir sey yapilmaz
+    if (wifiManager.isAPMode) {
+        TouchInput::Events ev = touch.poll();
+        if (ev.interact != TOUCH_NONE) sleepMgr.resetTimer();
+        sleepMgr.update();
+        return;
+    }
+
+    // ---- Normal (STA) modu ----
 
     // Touch okuma
     TouchInput::Events ev = touch.poll();
     handleTouch(ev);
 
-    // DHT sensoru guncelleme
-    if (now - lastDHTread > DHT_INTERVAL) {
+    // DHT sensoru guncelleme (sensor hazirsa)
+    if (dhtSensor.isReady() && now - lastDHTread > DHT_INTERVAL) {
         dhtSensor.read();
         lastDHTread = now;
     }

@@ -35,9 +35,9 @@ public:
             if (rtcManager.available) {
                 rtcManager.writeTime(time(nullptr));
             }
-            Serial.println("[Time] NTP sync OK");
+            DLOG("[Time] NTP sync OK");
         } else {
-            Serial.println("[Time] NTP failed, trying RTC...");
+            DLOG("[Time] NTP failed, trying RTC...");
             // NTP basarisiz: RTC'den oku
             if (rtcManager.available) {
                 time_t rtcTime = rtcManager.readTime();
@@ -48,9 +48,9 @@ public:
                     settimeofday(&tv, nullptr);
                     synced  = true;
                     rtcUsed = true;
-                    Serial.printf("[Time] Time from RTC: %s", ctime(&rtcTime));
+                    DLOGF("[Time] Time from RTC: %s", ctime(&rtcTime));
                 } else {
-                    Serial.println("[Time] RTC read failed or invalid");
+                    DLOG("[Time] RTC read failed or invalid");
                 }
             }
         }
@@ -68,7 +68,7 @@ public:
             lastSyncMs = millis();
             if (rtcManager.available) {
                 rtcManager.writeTime(time(nullptr));
-                Serial.println("[Time] NTP re-synced, RTC updated");
+                DLOG("[Time] NTP re-synced, RTC updated");
             }
         }
     }

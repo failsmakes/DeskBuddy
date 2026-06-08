@@ -44,8 +44,18 @@ public:
 
     void begin() {
         pinMode(PIN_DHT_DATA, INPUT_PULLUP);
-        // Ilk okuma icin sensor'un stabilize olmasi lazim
-        delay(type == DHT_TYPE_DHT11 ? 1000 : 2000);
+        // Stabilizasyon gecikmesi begin() icinde yapilmiyor.
+        // Ilk read() cagrisinda sensor henuz hazir olmayabilir - bu durumda
+        // checksum hatasi alacak ve valid=false olacak. Bir sonraki
+        // periyodik okumada (10sn sonra) duzgun okuma yapilacak.
+        // Bu sayede WiFi baslatma bloklenmez.
+        _beginMs = millis();
+    }
+
+    // Sensor hazir mi? (begin()'den bu yana yeterli sure gectiyse)
+    bool isReady() {
+        uint32_t warmup = (type == DHT_TYPE_DHT11 ? 1000 : 2000);
+        return (millis() - _beginMs >= warmup);
     }
 
     bool read() {
@@ -82,7 +92,7 @@ public:
         // ── 4. Checksum kontrol ──────────────────────────────
         uint8_t chk = data[0] + data[1] + data[2] + data[3];
         if (chk != data[4]) {
-            Serial.printf("[DHT] Checksum error: calc=%02X got=%02X\n", chk, data[4]);
+            DLOGF("[DHT] Checksum error: calc=%02X got=%02X\n", chk, data[4]);
             valid = false;
             return false;
         }
@@ -114,6 +124,8 @@ private:
         }
         return true;
     }
+
+    unsigned long _beginMs = 0;
 };
 
 // Global singleton - tip config.h'deki DHT_TYPE ile belirlenir
