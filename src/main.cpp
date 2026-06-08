@@ -137,13 +137,35 @@ void handleTouch(TouchInput::Events& ev) {
               (int)appState.mode);
     }
 
-    // ── Kisa dokunma: mod degis ──────────────────────────────
-    if (ev.interact == TOUCH_SHORT) {
-        if (appState.mode == MODE_ALARM && alarmMgr.alarmFiring) {
-            DLOG("[handleTouch] -> snoozeAlarm");
+    // ── Alarm veya geri sayim calarken: her turlu dokunusa tepki ver ───
+    // Bu kontrol MOD'dan bagimsiz calisir - overlay aktifken her zaman gecerli
+    if (alarmMgr.alarmFiring) {
+        if (ev.interact == TOUCH_SHORT) {
+            DLOG("[handleTouch] -> snoozeAlarm (short)");
             alarmMgr.snoozeAlarm();
+            display.invalidate();
             return;
         }
+        if (ev.interact == TOUCH_LONG) {
+            DLOG("[handleTouch] -> dismissAlarm (long)");
+            alarmMgr.dismissAlarm();
+            display.invalidate();
+            return;
+        }
+        return;  // diger padler alarm modunda islem yapmaz
+    }
+    if (alarmMgr.countdownFiring) {
+        if (ev.interact != TOUCH_NONE) {
+            DLOG("[handleTouch] -> countdownDismiss");
+            alarmMgr.countdownDismiss();
+            display.invalidate();
+            return;
+        }
+        return;  // diger padler countdown modunda islem yapmaz
+    }
+
+    // ── Kisa dokunma: mod degis ──────────────────────────────
+    if (ev.interact == TOUCH_SHORT) {
         if (!storage.hasSecondaryCity() && appState.showSecondary) {
             appState.showSecondary = false;
             DLOGF("[handleTouch] -> nextMode (skip secondary), new mode=%d", (int)appState.mode);
@@ -199,8 +221,6 @@ void handleTouch(TouchInput::Events& ev) {
                 break;
 
             case MODE_ALARM:
-                if (alarmMgr.alarmFiring)    { alarmMgr.dismissAlarm();     return; }
-                if (alarmMgr.countdownFiring) { alarmMgr.countdownDismiss(); return; }
                 appState.alarmSub = (AlarmSubScreen)
                     (((int)appState.alarmSub + 1) % (int)ALARM_SUB_COUNT);
                 display.invalidate();
@@ -214,41 +234,72 @@ void handleTouch(TouchInput::Events& ev) {
     // ── +, -, OK padleri (alarm modunda) ────────────────────
     if (appState.mode != MODE_ALARM) return;
 
+    bool alarmChanged = false;  // herhangi bir degisiklik oldu mu?
+
     switch (appState.alarmSub) {
         case ALARM_SUB_ALARM: {
             uint8_t idx = appState.selectedAlarm;
             // + kisa: dakika +1
-            if (ev.plus   == TOUCH_SHORT) alarmMgr.alarms[idx].minute = (alarmMgr.alarms[idx].minute + 1) % 60;
+            if (ev.plus   == TOUCH_SHORT) {
+                alarmMgr.alarms[idx].minute = (alarmMgr.alarms[idx].minute + 1) % 60;
+                alarmChanged = true;
+            }
             // - kisa: dakika -1
-            if (ev.minus_ == TOUCH_SHORT) alarmMgr.alarms[idx].minute = (alarmMgr.alarms[idx].minute + 59) % 60;
+            if (ev.minus_ == TOUCH_SHORT) {
+                alarmMgr.alarms[idx].minute = (alarmMgr.alarms[idx].minute + 59) % 60;
+                alarmChanged = true;
+            }
             // + uzun: saat +1
-            if (ev.plus   == TOUCH_LONG)  alarmMgr.alarms[idx].hour   = (alarmMgr.alarms[idx].hour + 1) % 24;
+            if (ev.plus   == TOUCH_LONG) {
+                alarmMgr.alarms[idx].hour = (alarmMgr.alarms[idx].hour + 1) % 24;
+                alarmChanged = true;
+            }
             // - uzun: saat -1
-            if (ev.minus_ == TOUCH_LONG)  alarmMgr.alarms[idx].hour   = (alarmMgr.alarms[idx].hour + 23) % 24;
-            // OK kisa: ac/kapat (enable/disable zaten saveToStorage cagiriyor)
+            if (ev.minus_ == TOUCH_LONG) {
+                alarmMgr.alarms[idx].hour = (alarmMgr.alarms[idx].hour + 23) % 24;
+                alarmChanged = true;
+            }
+            // OK kisa: ac/kapat
             if (ev.ok == TOUCH_SHORT) {
                 if (alarmMgr.alarms[idx].enabled) alarmMgr.disableAlarm(idx);
                 else                               alarmMgr.enableAlarm(idx);
+                alarmChanged = true;
             }
-            // OK uzun: sonraki alarm yuvasina gec, mevcut saati kaydet
+            // OK uzun: sonraki alarm yuvasina gec
             if (ev.ok == TOUCH_LONG) {
-                alarmMgr.saveToStorage();  // saat/dakika degisikliklerini kaydet
+                alarmMgr.saveToStorage();
                 appState.selectedAlarm = (appState.selectedAlarm + 1) % MAX_ALARMS;
                 buzzer.beep(40);
+                alarmChanged = true;
+            }
+            // Degisiklik olduysa kaydet ve ekrani guncelle
+            if (alarmChanged) {
+                alarmMgr.saveToStorage();
+                display.invalidate();
             }
             break;
         }
 
         case ALARM_SUB_COUNTDOWN: {
             uint32_t step = 60000;
-            if (ev.plus   == TOUCH_SHORT) alarmMgr.countdownSet(alarmMgr.countdownSetMs + step);
-            if (ev.minus_ == TOUCH_SHORT && alarmMgr.countdownSetMs >= step)
+            if (ev.plus   == TOUCH_SHORT) {
+                alarmMgr.countdownSet(alarmMgr.countdownSetMs + step);
+                alarmChanged = true;
+            }
+            if (ev.minus_ == TOUCH_SHORT && alarmMgr.countdownSetMs >= step) {
                 alarmMgr.countdownSet(alarmMgr.countdownSetMs - step);
-            if (ev.ok     == TOUCH_SHORT) {
+                alarmChanged = true;
+            }
+            if (ev.ok == TOUCH_SHORT) {
                 if (alarmMgr.countdownRunning) alarmMgr.countdownStop();
                 else                           alarmMgr.countdownStart();
+                alarmChanged = true;
             }
-            if (ev.ok == TOUCH_LONG) alarmMgr.countdownReset();
+            if (ev.ok == TOUCH_LONG) {
+                alarmMgr.countdownReset();
+                alarmChanged = true;
+            }
+            if (alarmChanged) display.invalidate();
             break;
         }
 
@@ -256,8 +307,13 @@ void handleTouch(TouchInput::Events& ev) {
             if (ev.ok == TOUCH_SHORT) {
                 if (alarmMgr.swRunning) alarmMgr.swStop();
                 else                    alarmMgr.swStart();
+                alarmChanged = true;
             }
-            if (ev.ok == TOUCH_LONG) alarmMgr.swReset();
+            if (ev.ok == TOUCH_LONG) {
+                alarmMgr.swReset();
+                alarmChanged = true;
+            }
+            if (alarmChanged) display.invalidate();
             break;
 
         default: break;
@@ -337,6 +393,11 @@ void setup() {
     // NOT: Gercek dusuk batarya durumunda koruma kalmaz,
     //      bu nedenle batarya voltaj izleme (battery.h) onemlidir.
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+    // CPU frekansini 240MHz'de sabitle.
+    // Bataryadan beslenirken ESP32 otomatik olarak 80MHz'e dusurebilir,
+    // bu touch algilama hassasiyetini ve WiFi hizini olumsuz etkiler.
+    setCpuFrequencyMhz(240);
 
     #if DEBUG_SERIAL
     Serial.begin(115200);
@@ -466,11 +527,18 @@ void loop() {
 
     // Alarm / geri sayim / kronometre
     struct tm localT = timeManager.getLocalTime();
+    bool wasFiring = alarmMgr.alarmFiring || alarmMgr.countdownFiring;
     alarmMgr.update(localT);
     buzzer.update();
+    bool isFiring = alarmMgr.alarmFiring || alarmMgr.countdownFiring;
+
+    // Auto-stop ile alarm bitti: ekrani temizle
+    if (wasFiring && !isFiring) {
+        display.invalidate();
+    }
 
     // Alarm calisiyor overlay
-    if (alarmMgr.alarmFiring || alarmMgr.countdownFiring) {
+    if (isFiring) {
         if (now - lastRedraw > 500) {
             drawAlarmFiringOverlay();
             if (eyes && appState.mode == MODE_BUDDY) {
@@ -493,12 +561,30 @@ void loop() {
         }
     }
 
-    // Hava durumu guncelleme
+    // Hava durumu guncelleme - BLOCKING HTTP isteği touch'tan önce değil,
+    // touch polling bittikten sonra ve sadece gerekirse yapılır.
+    // Bataryada WiFi yavaş çalışabilir, fetch 1-5sn bloklayabilir.
+    // Çözüm: fetch'i loop başında touch'tan SONRA yap,
+    // ama her loop iterasyonunda değil - sadece needsUpdate() true ise.
+    static bool _fetchNeeded = false;
     if (wifiManager.isConnected && storage.cfg.owmApiKey[0]) {
-        if (weatherPrimary.needsUpdate())
-            weatherPrimary.fetch(storage.cfg.cityPrimary);
-        if (storage.hasSecondaryCity() && weatherSecondary.needsUpdate())
-            weatherSecondary.fetch(storage.cfg.citySecondary);
+        if (weatherPrimary.needsUpdate() || 
+            (storage.hasSecondaryCity() && weatherSecondary.needsUpdate())) {
+            _fetchNeeded = true;
+        }
+    }
+    // Fetch'i sadece herhangi bir touch aktivitesi yoksa yap
+    // Bu sayede touch gecikmesi yaşanmaz
+    if (_fetchNeeded) {
+        bool anyActive = touch.interact.isHeld() || touch.plus.isHeld() ||
+                         touch.minus_.isHeld() || touch.ok.isHeld();
+        if (!anyActive) {
+            if (weatherPrimary.needsUpdate())
+                weatherPrimary.fetch(storage.cfg.cityPrimary);
+            if (storage.hasSecondaryCity() && weatherSecondary.needsUpdate())
+                weatherSecondary.fetch(storage.cfg.citySecondary);
+            _fetchNeeded = false;
+        }
     }
 
     // Ekran guncelleme

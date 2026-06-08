@@ -42,7 +42,7 @@
 // Not: DS3231 adresi 0x68, AT24C32 adresi 0x57
 
 // ---------- Touch Thresholds ----------
-#define TOUCH_THRESHOLD         40    // bu degerden dusuk = dokunuldu
+#define TOUCH_THRESHOLD         50    // bu degerden dusuk = dokunuldu
 #define TOUCH_SLEEP_THRESHOLD   20    // deep sleep wakeup esigi (daha duyarli)
 #define TOUCH_LONG_PRESS_MS    800    // ms - uzun basma suresi
 #define TOUCH_DEBOUNCE_MS       50
@@ -413,7 +413,7 @@ static const uint8_t LOGO_BITMAP[] PROGMEM = {
 // ---------- Debug / Gelistirme ----------
 // 1 = Seri porta debug mesajlari gonderilir (gelistirme modu)
 // 0 = Seri port cikti yok (uretim modu, biraz daha az bellek kullanir)
-#define DEBUG_SERIAL  1
+#define DEBUG_SERIAL  0
 
 #if DEBUG_SERIAL
   #define DLOG(msg)        Serial.println(msg)
@@ -424,4 +424,4 @@ static const uint8_t LOGO_BITMAP[] PROGMEM = {
 #endif
 
 // ---------- Sleep / Uyku Modu ----------
-#define SLEEP_TIMEOUT_DEFAULT_S  300  // 5 dakika varsayilan
+#define SLEEP_TIMEOUT_DEFAULT_S  60  // 5 dakika varsayilan

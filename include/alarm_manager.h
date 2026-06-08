@@ -8,7 +8,8 @@
 //  alarm_manager.h  -  3x Alarm / Countdown / Stopwatch
 // ============================================================
 
-#define MAX_ALARMS 3
+#define MAX_ALARMS       3
+#define ALARM_AUTO_STOP_MS  180000UL   // 180 saniye sonra otomatik kapat
 
 struct AlarmEntry {
     uint8_t  hour      = 7;
@@ -16,50 +17,44 @@ struct AlarmEntry {
     bool     enabled   = false;
     bool     firing    = false;
     bool     snoozed   = false;
-    unsigned long snoozeUntilMs = 0;
-    uint8_t  lastMinuteChecked  = 255;
+    unsigned long snoozeUntilMs  = 0;
+    unsigned long firingStartMs  = 0;  // alarm calınmaya başlama zamani
+    uint8_t  lastMinuteChecked   = 255;
 };
 
 class AlarmManager {
 public:
-    // ---- 3 Alarm yuvasi ----
     AlarmEntry alarms[MAX_ALARMS];
-
-    // Hangi alarm caliyor (255 = yok)
     uint8_t  firingIdx    = 255;
+    bool     alarmFiring  = false;
 
-    // Kisa erisim yardimcilari (ekran ve pad kodu icin)
-    bool alarmFiring  = false;   // herhangi biri caliyor mu?
-
-    // ---- Countdown ----
+    // Countdown
     bool     countdownRunning  = false;
     bool     countdownFiring   = false;
     uint32_t countdownSetMs    = 0;
     uint32_t countdownLeftMs   = 0;
-    unsigned long countdownStartedAt = 0;
+    unsigned long countdownStartedAt  = 0;
+    unsigned long countdownFiringStartMs = 0;  // countdown alarm baslama zamani
 
-    // ---- Stopwatch ----
+    // Stopwatch
     bool     swRunning   = false;
     uint32_t swElapsedMs = 0;
     unsigned long swStartedAt = 0;
 
-    // ---- EEPROM entegrasyonu ----
-
-    // Boot'ta storage'dan alarm verilerini yukle
+    // EEPROM
     void loadFromStorage() {
         for (uint8_t i = 0; i < MAX_ALARMS; i++) {
             alarms[i].hour    = storage.cfg.alarms[i].hour;
             alarms[i].minute  = storage.cfg.alarms[i].minute;
             alarms[i].enabled = storage.cfg.alarms[i].enabled;
-            // Runtime state'leri sifirla
-            alarms[i].firing              = false;
-            alarms[i].snoozed             = false;
-            alarms[i].snoozeUntilMs       = 0;
-            alarms[i].lastMinuteChecked   = 255;
+            alarms[i].firing           = false;
+            alarms[i].snoozed          = false;
+            alarms[i].snoozeUntilMs    = 0;
+            alarms[i].firingStartMs    = 0;
+            alarms[i].lastMinuteChecked = 255;
         }
     }
 
-    // Alarm degisikliklerini EEPROM'a kaydet
     void saveToStorage() {
         for (uint8_t i = 0; i < MAX_ALARMS; i++) {
             storage.cfg.alarms[i].hour    = alarms[i].hour;
@@ -69,7 +64,6 @@ public:
         storage.save();
     }
 
-    // ---- loop() icinde her iterasyonda cagir ----
     void update(struct tm& localTime) {
         updateAlarms(localTime);
         updateCountdown();
@@ -80,7 +74,6 @@ public:
         if (idx >= MAX_ALARMS) return;
         alarms[idx].hour   = h;
         alarms[idx].minute = m;
-        // Not: save() enableAlarm/disableAlarm'dan cagrilir
     }
     void enableAlarm(uint8_t idx) {
         if (idx >= MAX_ALARMS) return;
@@ -97,8 +90,8 @@ public:
     }
     void snoozeAlarm() {
         if (firingIdx >= MAX_ALARMS) return;
-        alarms[firingIdx].firing       = false;
-        alarms[firingIdx].snoozed      = true;
+        alarms[firingIdx].firing        = false;
+        alarms[firingIdx].snoozed       = true;
         alarms[firingIdx].snoozeUntilMs = millis() + ALARM_SNOOZE_MS;
         buzzer.stop();
         _refreshFiringState();
@@ -108,11 +101,11 @@ public:
         alarms[firingIdx].firing   = false;
         alarms[firingIdx].snoozed  = false;
         alarms[firingIdx].enabled  = false;
+        alarms[firingIdx].firingStartMs = 0;
         buzzer.stop();
         _refreshFiringState();
     }
 
-    // Calan alarmin saat/dakika bilgisi
     uint8_t firingHour()   { return firingIdx < MAX_ALARMS ? alarms[firingIdx].hour   : 0; }
     uint8_t firingMinute() { return firingIdx < MAX_ALARMS ? alarms[firingIdx].minute : 0; }
 
@@ -137,11 +130,13 @@ public:
     void countdownReset() {
         countdownRunning = false;
         countdownFiring  = false;
+        countdownFiringStartMs = 0;
         countdownLeftMs  = countdownSetMs;
         buzzer.stop();
     }
     void countdownDismiss() {
         countdownFiring = false;
+        countdownFiringStartMs = 0;
         buzzer.stop();
         countdownReset();
     }
@@ -163,7 +158,6 @@ public:
         return swRunning ? swElapsedMs + (millis() - swStartedAt) : swElapsedMs;
     }
 
-    // Format ms -> "HH:MM:SS"
     String formatMs(uint32_t ms) {
         uint32_t s = ms / 1000;
         char buf[9];
@@ -182,19 +176,33 @@ private:
 
             // Snooze suresi doldu mu?
             if (a.snoozed && millis() >= a.snoozeUntilMs) {
-                a.snoozed = false;
-                a.firing  = true;
+                a.snoozed       = false;
+                a.firing        = true;
+                a.firingStartMs = millis();
             }
 
-            // Saat eslesme kontrolu
+            // Saat eslesme
             if (!a.firing && !a.snoozed) {
                 if (t.tm_hour == a.hour && t.tm_min == a.minute) {
                     if (a.lastMinuteChecked != (uint8_t)t.tm_min) {
                         a.lastMinuteChecked = (uint8_t)t.tm_min;
-                        a.firing = true;
+                        a.firing        = true;
+                        a.firingStartMs = millis();
                     }
                 } else {
                     a.lastMinuteChecked = 255;
+                }
+            }
+
+            // 180 saniye auto-stop
+            if (a.firing && a.firingStartMs > 0) {
+                if (millis() - a.firingStartMs >= ALARM_AUTO_STOP_MS) {
+                    DLOGF("[Alarm] Auto-stop alarm %d after %lus", i,
+                          (unsigned long)(ALARM_AUTO_STOP_MS / 1000));
+                    a.firing   = false;
+                    a.enabled  = false;   // otomatik kapaninca alarmi da kapat
+                    a.firingStartMs = 0;
+                    saveToStorage();
                 }
             }
         }
@@ -205,13 +213,21 @@ private:
     void updateCountdown() {
         if (!countdownRunning) return;
         if (countdownCurrent() == 0) {
-            countdownRunning = false;
-            countdownFiring  = true;
+            countdownRunning       = false;
+            countdownFiring        = true;
+            countdownFiringStartMs = millis();
             buzzer.startAlert();
+        }
+        // 180 saniye auto-stop
+        if (countdownFiring && countdownFiringStartMs > 0) {
+            if (millis() - countdownFiringStartMs >= ALARM_AUTO_STOP_MS) {
+                DLOGF("[Alarm] Auto-stop countdown after %lus",
+                      (unsigned long)(ALARM_AUTO_STOP_MS / 1000));
+                countdownDismiss();
+            }
         }
     }
 
-    // alarmFiring ve firingIdx'i guncelle
     void _refreshFiringState() {
         firingIdx   = 255;
         alarmFiring = false;

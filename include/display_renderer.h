@@ -52,8 +52,9 @@ public:
     int8_t  _lastMin    = -1;
     int8_t  _lastSec    = -1;
     int16_t _lastMday   = -1;
-    int8_t  _lastBatPct = -1;
-    bool    _lastBatCrit= false;
+    int8_t  _lastBatPct  = -1;
+    bool    _lastBatCrit = false;
+    bool    _lastBatHas  = true;   // hasBattery cache
     float   _lastTemp   = -999;
     float   _lastHum    = -999;
     float   _lastVolt   = -999;
@@ -70,7 +71,7 @@ public:
     // ---- Baslangic ----
     void begin() {
         tft.init();
-        tft.setRotation(1);
+        tft.setRotation(3);
         tft.fillScreen(TFT_BLACK);
         _needFullRedraw = true;
     }
@@ -500,30 +501,52 @@ private:
     void _updateBatterySprite() {
         if (!battery.valid) return;
         if (battery.percent == _lastBatPct &&
-            battery.critical == _lastBatCrit) return;
+            battery.critical == _lastBatCrit &&
+            battery.hasBattery == _lastBatHas) return;
 
         _lastBatPct  = battery.percent;
         _lastBatCrit = battery.critical;
-
-        uint16_t col = battery.critical ? TFT_RED :
-                       (battery.percent > 50 ? 0x877F :
-                       (battery.percent > 20 ? TFT_YELLOW : TFT_RED));
+        _lastBatHas  = battery.hasBattery;
 
         sprBat.createSprite(SPR_BAT_W, SPR_BAT_H);
         sprBat.fillSprite(TFT_BLACK);
 
+        if (!battery.hasBattery) {
+            // Pil yok - USB besleme
+            sprBat.setTextSize(1);
+            sprBat.setTextColor(TFT_DARKGREY);
+            sprBat.setCursor(0, 5);
+            sprBat.print("USB");
+            sprBat.pushSprite(SCREEN_W - SPR_BAT_W - 4, 3);
+            sprBat.deleteSprite();
+            return;
+        }
+
+        uint16_t col = battery.critical ? TFT_RED :
+                       battery.charging  ? TFT_GREEN :
+                       (battery.percent > 50 ? 0x877F :
+                       (battery.percent > 20 ? TFT_YELLOW : TFT_RED));
+
         // Pil ikonu (36x16)
         sprBat.drawRect(0, 1, 36, 14, col);
-        sprBat.fillRect(36, 5, 4, 6, col);  // kutup tokmagi
-        sprBat.fillRect(2, 3, 32, 10, TFT_BLACK);  // ic siyah
+        sprBat.fillRect(36, 5, 4, 6, col);
+        sprBat.fillRect(2, 3, 32, 10, TFT_BLACK);
         int16_t fw = (32 * battery.percent) / 100;
         if (fw > 0) sprBat.fillRect(2, 3, fw, 10, col);
 
-        // Kritik yanip sonme
+        // Şarj simgesi
+        if (battery.charging) {
+            sprBat.setTextSize(1);
+            sprBat.setTextColor(TFT_GREEN);
+            sprBat.setCursor(13, 4);
+            sprBat.print("+");
+        }
+
+        // Kritik yanıp sönme
         if (battery.critical && ((millis() / 500) % 2 == 0))
             sprBat.fillRect(2, 3, 32, 10, TFT_BLACK);
 
-        // Yuzde metni
+        // Yüzde
         sprBat.setTextSize(1);
         sprBat.setTextColor(col);
         sprBat.setCursor(42, 5);

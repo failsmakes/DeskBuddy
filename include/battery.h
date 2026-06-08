@@ -1,56 +1,56 @@
 #pragma once
 #include <Arduino.h>
+#include <driver/adc.h>          // ESP32 IDF ADC driver - en güvenilir yöntem
+#include <esp_adc_cal.h>         // ADC kalibrasyon
 
 // ============================================================
 //  battery.h  -  Lolin D32 batarya voltaj okuyucu
 //
-//  Lolin D32 kartinda dahili voltaj bolucusu (100k+100k) vardir.
-//  Batarya + ucu --> 100k --> GPIO35 --> 100k --> GND
-//  Yani ADC okunan deger gercek voltajin yarisina esittir.
+//  Lolin D32: GPIO35 = ADC1_CHANNEL_7
+//  Dahili 100k+100k voltaj bölücüsü: Vbat/2 -> GPIO35
 //
-//  Li-Ion pillar icin:
-//    4.20V = %100 (tam dolu)
-//    4.00V = %75
-//    3.80V = %50
-//    3.60V = %25
-//    3.30V = %5   (kritik)
-//    3.00V = %0   (bos)
+//  ESP32 Arduino'da analogRead() güvenilmez olabiliyor.
+//  ESP-IDF ADC driver (adc1_get_raw) + esp_adc_cal ile
+//  kalibre edilmiş okuma kullanıyoruz.
 //
-//  ADC karakterizasyonu: ESP32 ADC lineer degil, bu yuzden
-//  coklu olcum ortalamayla yumusatiyoruz.
+//  NOT: analogSetAttenuation() TÜM ADC kanallarını etkiler,
+//  touch okumalarını bozar. Bu yüzden kullanmıyoruz.
 // ============================================================
 
-#define BAT_PIN          35
-#define BAT_SAMPLES      16       // ortalama icin ornek sayisi
-#define BAT_DIVIDER      2.0f     // voltaj bolucusu orani
-#define BAT_VREF         3.3f     // ESP32 ADC referans voltaji
-#define BAT_ADC_MAX      4095.0f  // 12-bit ADC
-#define BAT_FULL_V       4.20f    // %100 voltaj
-#define BAT_EMPTY_V      3.00f    // %0 voltaj
-#define BAT_CRITICAL_V   3.30f    // kritik uyari esigi
-#define BAT_UPDATE_MS    30000UL  // 30 saniyede bir guncelle
-
-// ESP32 ADC dogrusal olmadigi icin lookup table ile duzeltiyoruz
-// (ADC ham degeri -> gercek voltaj carpani, ampirik degerler)
-static const float BAT_ADC_CORRECTION = 1.045f; // tipik ESP32 ADC hatasi telafisi
+#define BAT_ADC_CHANNEL   ADC1_CHANNEL_7   // GPIO35
+#define BAT_ADC_ATTEN     ADC_ATTEN_DB_11  // 0-3.9V
+#define BAT_ADC_WIDTH     ADC_WIDTH_BIT_12 // 12-bit
+#define BAT_SAMPLES       16
+#define BAT_DIVIDER       2.0f
+#define BAT_FULL_V        4.20f
+#define BAT_EMPTY_V       3.00f
+#define BAT_CRITICAL_V    3.30f
+#define BAT_UPDATE_MS     30000UL
+// Lolin D32 şarj edilirken USB'den ölçülen tipik değer (~4.2V bölücü çıkışı)
+#define BAT_USB_MIN_V     4.10f    // bu değerin üstü = USB şarjda
 
 class Battery {
 public:
-    float   voltage    = 0.0f;   // olculen voltaj (V)
-    uint8_t percent    = 0;      // doluluk yuzdesi (0-100)
-    bool    charging   = false;  // sarj durumu (GPIO ile takip edilmiyorsa false)
-    bool    critical   = false;  // kritik seviye
+    float   voltage    = 0.0f;
+    uint8_t percent    = 0;
+    bool    critical   = false;
+    bool    charging   = false;   // USB'den şarj oluyor
     bool    valid      = false;
-
+    bool    hasBattery = false;   // pil takılı mı
     unsigned long lastReadMs = 0;
 
     void begin() {
-        analogReadResolution(12);
-        analogSetAttenuation(ADC_11db); // 0-3.9V arasi olcum icin
-        read(); // ilk okuma
+        // IDF seviyesinde ADC1 yapılandır - sadece bu kanalı etkiler
+        adc1_config_width(BAT_ADC_WIDTH);
+        adc1_config_channel_atten(BAT_ADC_CHANNEL, BAT_ADC_ATTEN);
+
+        // Kalibrasyon karakterizasyonu
+        esp_adc_cal_characterize(ADC_UNIT_1, BAT_ADC_ATTEN,
+                                  BAT_ADC_WIDTH, 1100, &_chars);
+        delay(20);
+        read();
     }
 
-    // Guncelleme gerekiyor mu?
     bool needsUpdate() {
         return !valid || (millis() - lastReadMs > BAT_UPDATE_MS);
     }
@@ -60,36 +60,59 @@ public:
     }
 
     void read() {
-        // Coklu ornek al, ortalamasini hesapla
+        // Warm-up: ilk 3 okumayı at
+        for (int i = 0; i < 3; i++) adc1_get_raw(BAT_ADC_CHANNEL);
+
+        // BAT_SAMPLES adet okuyup ortalama al
         uint32_t sum = 0;
         for (int i = 0; i < BAT_SAMPLES; i++) {
-            sum += analogRead(BAT_PIN);
+            sum += adc1_get_raw(BAT_ADC_CHANNEL);
             delay(2);
         }
-        float raw = (float)(sum / BAT_SAMPLES);
+        uint32_t raw = sum / BAT_SAMPLES;
 
-        // ADC -> voltaj donusumu
-        // GPIO35 bolucuden gelen: Vbat/2
-        // ADC: raw / 4095 * Vref
-        // Gercek voltaj: (raw / 4095 * Vref) * 2 * duzeltme_katsayisi
-        voltage = (raw / BAT_ADC_MAX) * BAT_VREF * BAT_DIVIDER * BAT_ADC_CORRECTION;
+        // IDF kalibrasyon ile mV'ye çevir
+        uint32_t mv = esp_adc_cal_raw_to_voltage(raw, &_chars);
 
-        // Voltaji yuzdege donustur (lineer interpolasyon)
+        // Bölücü: GPIO35'te Vbat/2 var, gerçek voltajı hesapla
+        voltage = (mv / 1000.0f) * BAT_DIVIDER;
+
+        DLOGF("[Battery] raw=%lu  mv=%lu  voltage=%.3fV", raw, mv, voltage);
+
+        // Pil takılı mı? (0.5V altı = pin float = pil yok)
+        if (voltage < 0.5f) {
+            hasBattery = false;
+            charging   = false;
+            critical   = false;
+            percent    = 0;
+            valid      = true;
+            lastReadMs = millis();
+            DLOG("[Battery] No battery detected (USB only)");
+            return;
+        }
+
+        hasBattery = true;
+
+        // USB şarjda mı? (voltaj BAT_FULL_V'ye yakın veya üstünde)
+        charging = (voltage >= BAT_USB_MIN_V);
+
         if (voltage >= BAT_FULL_V) {
             percent = 100;
         } else if (voltage <= BAT_EMPTY_V) {
             percent = 0;
         } else {
-            percent = (uint8_t)(((voltage - BAT_EMPTY_V) / (BAT_FULL_V - BAT_EMPTY_V)) * 100.0f);
+            percent = (uint8_t)(((voltage - BAT_EMPTY_V) /
+                                  (BAT_FULL_V - BAT_EMPTY_V)) * 100.0f);
         }
 
-        critical = (voltage < BAT_CRITICAL_V);
-        valid    = true;
+        critical   = (!charging && voltage < BAT_CRITICAL_V);
+        valid      = true;
         lastReadMs = millis();
+
+        DLOGF("[Battery] voltage=%.3fV  percent=%d%%  charging=%d  critical=%d",
+              voltage, percent, charging, critical);
     }
 
-    // Sarj durumu ikonu icin seviye kodu doner: 0-4
-    // 0=bos, 1=ceyrek, 2=yari, 3=uc ceyrek, 4=dolu
     uint8_t iconLevel() const {
         if (percent >= 88) return 4;
         if (percent >= 63) return 3;
@@ -97,6 +120,9 @@ public:
         if (percent >= 13) return 1;
         return 0;
     }
+
+private:
+    esp_adc_cal_characteristics_t _chars;
 };
 
 extern Battery battery;
