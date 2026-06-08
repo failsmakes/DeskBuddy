@@ -26,25 +26,61 @@ public:
     }
 
     // ─── Logo screen ──────────────────────────────────────────
+    // Format: yatay, 1 bit/piksel, MSB first (image2cpp varsayilani)
+    // LOGO_SCALE=1 icin en hizli yontem:
+    //   Her satiri okuyup 2 renk buffer'a yaz, setWindow+pushColors ile gonder
+    //   40000 piksel icin ~50ms (drawPixel ile ~400ms olurdu)
     void drawLogo() {
         tft.fillScreen(LOGO_BG_COLOR);
+
+        const int bytesPerRow = (LOGO_W + 7) / 8;  // 200px -> 25 byte/satir
+
+        // Ekranda ortala, sinir disi giderse klamp et
         int16_t x0 = (SCREEN_W  - LOGO_W * LOGO_SCALE) / 2;
         int16_t y0 = (SCREEN_H - LOGO_H * LOGO_SCALE) / 2;
-        for (int row = 0; row < LOGO_H; row++) {
-            uint8_t byte0 = pgm_read_byte(&LOGO_BITMAP[row * 2]);
-            uint8_t byte1 = pgm_read_byte(&LOGO_BITMAP[row * 2 + 1]);
-            uint16_t rowBits = ((uint16_t)byte1 << 8) | byte0;
-            for (int col = 0; col < LOGO_W; col++) {
-                uint16_t colour = (rowBits & (1 << col)) ? LOGO_FG_COLOR : LOGO_BG_COLOR;
-                tft.fillRect(x0 + col * LOGO_SCALE, y0 + row * LOGO_SCALE,
-                             LOGO_SCALE, LOGO_SCALE, colour);
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+
+        if (LOGO_SCALE == 1) {
+            // --- Hizli yol: satir basina setWindow + pushColor ---
+            // Her satir icin: bitmap'ten 25 byte oku, 200 RGB565 piksele donustur, tek seferde gonder
+            uint16_t lineBuf[LOGO_W];
+
+            for (int row = 0; row < LOGO_H; row++) {
+                // Satirin 200 pikselini RGB565 buffer'a donustur
+                for (int col = 0; col < LOGO_W; col++) {
+                    int     byteIdx = row * bytesPerRow + (col >> 3);
+                    uint8_t b       = pgm_read_byte(&LOGO_BITMAP[byteIdx]);
+                    bool    pixel   = (b >> (7 - (col & 7))) & 0x01;
+                    lineBuf[col]    = pixel ? LOGO_FG_COLOR : LOGO_BG_COLOR;
+                }
+                // TFT_eSPI: setWindow sonrasi pushColors ile tum satiri tek seferde yaz
+                tft.setAddrWindow(x0, y0 + row, x0 + LOGO_W - 1, y0 + row);
+                tft.pushColors(lineBuf, LOGO_W, true);
+            }
+        } else {
+            // Buyutme modu: fillRect ile (yavas ama buyutme nadiren gerekli)
+            for (int row = 0; row < LOGO_H; row++) {
+                for (int col = 0; col < LOGO_W; col++) {
+                    int     byteIdx = row * bytesPerRow + (col >> 3);
+                    uint8_t b       = pgm_read_byte(&LOGO_BITMAP[byteIdx]);
+                    bool    pixel   = (b >> (7 - (col & 7))) & 0x01;
+                    uint16_t colour = pixel ? LOGO_FG_COLOR : LOGO_BG_COLOR;
+                    tft.fillRect(x0 + col * LOGO_SCALE,
+                                 y0 + row * LOGO_SCALE,
+                                 LOGO_SCALE, LOGO_SCALE, colour);
+                }
             }
         }
-        // Centered project name
-        tft.setTextColor(LOGO_FG_COLOR, LOGO_BG_COLOR);
-        tft.setTextSize(2);
-        tft.setCursor(SCREEN_W / 2 - 58, SCREEN_H / 2 + LOGO_H * LOGO_SCALE / 2 + 8);
-        tft.print("DeskBuddy");
+
+        // Proje adini logonun altina yaz (yer varsa)
+        int16_t textY = y0 + LOGO_H * LOGO_SCALE + 4;
+        if (textY + 16 < SCREEN_H) {
+            tft.setTextColor(LOGO_FG_COLOR, LOGO_BG_COLOR);
+            tft.setTextSize(2);
+            tft.setCursor(SCREEN_W / 2 - 58, textY);
+            tft.print("DeskBuddy");
+        }
     }
 
     // =========================================================

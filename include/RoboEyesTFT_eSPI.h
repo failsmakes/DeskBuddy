@@ -46,7 +46,7 @@ class TFT_RoboEyes {
     TFT_eSprite *sprite;
 
     // Display configuration – you can update these via setScreenSize()
-    int screenWidth = 135;   // effective width (set by user)
+    int screenWidth = 320;   // effective width (set by user)
     int screenHeight = 240;  // effective height (set by user)
     uint16_t bgColor;        // background color for drawing overlays
     uint16_t mainColor;      // color for the eyes
@@ -153,14 +153,14 @@ class TFT_RoboEyes {
       eyeL_open = eyeR_open = false;
 
       // Initialize eye dimensions (default values, you can adjust later)
-      eyeLwidthDefault = 36;
-      eyeLheightDefault = 36;
+      eyeLwidthDefault = 72;
+      eyeLheightDefault = 72;
       eyeLwidthCurrent = eyeLwidthDefault;
       eyeLheightCurrent = 1; // start closed
       eyeLwidthNext = eyeLwidthDefault;
       eyeLheightNext = eyeLheightDefault;
       eyeLheightOffset = 0;
-      eyeLborderRadiusDefault = 8;
+      eyeLborderRadiusDefault = 16;
       eyeLborderRadiusCurrent = eyeLborderRadiusDefault;
       eyeLborderRadiusNext = eyeLborderRadiusDefault;
 
